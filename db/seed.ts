@@ -1,17 +1,13 @@
 import 'dotenv/config'; // 1. 必须加载环境变量
-import { PrismaPg } from '@prisma/adapter-pg'; // 2. 引入适配器
-import pg from 'pg'; // 3. 引入数据库驱动
+import { PrismaNeon } from '@prisma/adapter-neon';
 import { PrismaClient } from '@/prisma/generated/prisma/client'; 
 import sampleData from './sample-data';
 
 // --- 配置适配器 (与 lib/db.ts 保持一致) ---
-const connectionString = process.env.DATABASE_URL!;
-const pool = new pg.Pool({ connectionString });
-const adapter = new PrismaPg(pool);
-
+const adapter = new PrismaNeon({ connectionString: process.env.DATABASE_URL });
 // --- 实例化客户端 ---
 // 注意：这里不再需要 "as any"，而是必须传入 adapter
-export const prisma = new PrismaClient({ adapter });
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
     console.log('🌱 开始同步数据...');
