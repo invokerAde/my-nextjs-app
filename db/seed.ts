@@ -1,7 +1,7 @@
-import 'dotenv/config'; // 1. 必须加载环境变量
-import { PrismaNeon } from '@prisma/adapter-neon';
-import { PrismaClient } from '@/prisma/generated/prisma/client'; 
-import sampleData from './sample-data';
+import "dotenv/config"; // 1. 必须加载环境变量
+import { PrismaNeon } from "@prisma/adapter-neon";
+import { PrismaClient } from "@/prisma/generated/prisma/client";
+import sampleData from "./sample-data";
 
 // --- 配置适配器 (与 lib/db.ts 保持一致) ---
 const adapter = new PrismaNeon({ connectionString: process.env.DATABASE_URL });
@@ -10,25 +10,32 @@ const adapter = new PrismaNeon({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-    console.log('🌱 开始同步数据...');
-    
-    try {
-        // 1. 清空旧数据
-        await prisma.product.deleteMany();
-        console.log('旧数据已清空');
+  console.log(" 开始同步数据...");
 
-        // 2. 写入新数据
-        await prisma.product.createMany({ 
-            data: sampleData.products 
-        });
-        
-        console.log('✅ Database seeded Successfully!');
-    } catch (error) {
-        console.error('❌  seeding 失败:', error);
-    } finally {
-        // 5. 重要：脚本执行完后必须断开连接
-        await prisma.$disconnect();
-    }
+  try {
+    // 1. 清空旧数据
+    await prisma.product.deleteMany();
+    await prisma.account.deleteMany();
+    await prisma.session.deleteMany();
+    await prisma.verificationToken.deleteMany();
+    await prisma.user.deleteMany();
+    console.log("旧数据已清空");
+
+    // 2. 写入新数据
+    await prisma.product.createMany({
+      data: sampleData.products,
+    });
+    await prisma.user.createMany({
+      data: sampleData.users,
+    });
+
+    console.log(" Database seeded Successfully!");
+  } catch (error) {
+    console.error("  seeding 失败:", error);
+  } finally {
+    // 5. 重要：脚本执行完后必须断开连接
+    await prisma.$disconnect();
+  }
 }
 
 main();
