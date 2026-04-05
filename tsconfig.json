@@ -1,10 +1,6 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "paths": {
-      // 这里的键名必须和你代码中 import 的路径逻辑一致
-      "../generated/prisma/client": ["./generated/prisma/client"]
-    }，
     "lib": [
       "dom",
       "dom.iterable",
@@ -38,7 +34,6 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"，
-    "generated/**/*.ts"
   ],
   "exclude": [
     "node_modules"
