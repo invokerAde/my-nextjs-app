@@ -4,7 +4,6 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "postinstall": "prisma generate",
     "dev": "next dev --turbopack",
     "build": "prisma generate && next build --turbopack",
     "start": "next start",
