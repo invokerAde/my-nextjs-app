@@ -1,18 +1,24 @@
-import ProductList from "@/components/shared/header/product/product-list";
+import ProductList from "@/components/shared/product/product-list";
 import getLatestProducts from "@/lib/actions/product.actions";
 
 const Homepage = async () => {
   const latestProducts = await getLatestProducts();
 
-  const formattedProducts = latestProducts.map(product => ({
+  const formattedProducts = latestProducts.map((product) => ({
     ...product,
-    price: typeof product.price === 'string' ? parseFloat(product.price) : product.price,
-    rating: typeof product.rating === 'string' ? parseFloat(product.rating) : product.rating,
+    price:
+      typeof product.price === "string"
+        ? parseFloat(product.price)
+        : product.price,
+    rating:
+      typeof product.rating === "string"
+        ? parseFloat(product.rating)
+        : product.rating,
   }));
 
   return (
     <>
-      <ProductList data={formattedProducts} title="Newest Arrivals"  />
+      <ProductList data={formattedProducts} title="Newest Arrivals" />
     </>
   );
 };
