@@ -19,10 +19,10 @@ const calcPrice = (items: CartItem[]) => {
     totalPrice = round2(itemsPrice + taxPrice + shippingPrice);
 
   return {
-    itemsPrice,
-    shippingPrice,
-    taxPrice,
-    totalPrice,
+    itemsPrice: itemsPrice.toFixed(2),
+    shippingPrice: shippingPrice.toFixed(2),
+    taxPrice: taxPrice.toFixed(2),
+    totalPrice: totalPrice.toFixed(2),
   };
 };
 
@@ -140,10 +140,10 @@ export async function getMyCart() {
   return convertToPlainObject({
     ...cart,
     items: cart.items as CartItem[],
-    itemsPrice: Number(cart.itemsPrice),
-    totalPrice: Number(cart.totalPrice),
-    shippingPrice: Number(cart.shippingPrice),
-    taxPrice: Number(cart.taxPrice),
+    itemsPrice: cart.itemsPrice.toString(),
+    totalPrice: cart.totalPrice.toString(),
+    shippingPrice: cart.shippingPrice.toString(),
+    taxPrice: cart.taxPrice.toString(),
   });
 }
 

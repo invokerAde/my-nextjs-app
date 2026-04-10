@@ -44,23 +44,13 @@ const OrderDetailsPage = async (props: {
 
   return (
     <OrderDetailsTable
-  order={{
-    ...order,
-    // Top-level conversions
-    itemsPrice: Number(order.itemsPrice),
-    taxPrice: Number(order.taxPrice),
-    shippingPrice: Number(order.shippingPrice),
-    totalPrice: Number(order.totalPrice),
-    shippingAddress: order.shippingAddress as ShippingAddress,
-    
-    // Nested array conversion
-    orderitems: order.orderitems.map((item) => ({
-      ...item,
-      price: Number(item.price),
-    })),
-  }}
-  paypalClientId={process.env.PAYPAL_CLIENT_ID || 'sb'}
-/>
+      order={{
+        ...order,
+        shippingAddress: order.shippingAddress as ShippingAddress,
+      }}
+      paypalClientId={process.env.PAYPAL_CLIENT_ID || "sb"}
+      isAdmin={session?.user?.role === "admin" || false}
+    />
   );
 };
 

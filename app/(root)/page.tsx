@@ -1,24 +1,19 @@
+import ProductCarousel from "@/components/shared/product/product-carousel";
 import ProductList from "@/components/shared/product/product-list";
-import getLatestProducts from "@/lib/actions/product.actions";
+import { getFeaturedProducts, getLatestProducts } from "@/lib/actions/product.actions";
+import type { Product } from "@/types";
+import ViewAllProductsButton from '@/components/view-all-products-button';
 
 const Homepage = async () => {
   const latestProducts = await getLatestProducts();
-
-  const formattedProducts = latestProducts.map((product) => ({
-    ...product,
-    price:
-      typeof product.price === "string"
-        ? parseFloat(product.price)
-        : product.price,
-    rating:
-      typeof product.rating === "string"
-        ? parseFloat(product.rating)
-        : product.rating,
-  }));
-
+const featuredProducts = await getFeaturedProducts();
   return (
     <>
-      <ProductList data={formattedProducts} title="Newest Arrivals" />
+      {featuredProducts.length > 0 && (
+        <ProductCarousel data={featuredProducts} />
+      )}
+      <ProductList data={latestProducts} title='Newest Arrivals' limit={4} />
+      <ViewAllProductsButton />
     </>
   );
 };
