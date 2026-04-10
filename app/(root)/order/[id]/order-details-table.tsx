@@ -27,16 +27,19 @@ import {
   updateOrderToPaidCOD,
   deliverOrder,
 } from "@/lib/actions/order.actions";
+import StripePayment from "./stripe-payment";
 // import StripePayment from "./stripe-payment";
 
 const OrderDetailsTable = ({
   order,
   paypalClientId,
   isAdmin,
+  stripeClientSecret,
 }: {
   order: Omit<Order, "paymentResult">;
   paypalClientId: string;
-  isAdmin:boolean;
+  isAdmin: boolean;
+  stripeClientSecret: string | null;
 }) => {
   const {
     id,
@@ -69,7 +72,7 @@ const OrderDetailsTable = ({
     const res = await createPayPalOrder(order.id);
 
     if (!res.success) {
-      toast.warning(res.message);
+      toast.error(res.message);
     }
 
     return res.data;
@@ -78,7 +81,7 @@ const OrderDetailsTable = ({
   const handleApprovePayPalOrder = async (data: { orderID: string }) => {
     const res = await approvePayPalOrder(order.id, data);
 
-    toast[res.success ? "success" : "warning"](res.message);
+    toast[res.success ? "message" : "error"](res.message);
   };
 
   // Button to mark order as paid
@@ -92,7 +95,7 @@ const OrderDetailsTable = ({
         onClick={() =>
           startTransition(async () => {
             const res = await updateOrderToPaidCOD(order.id);
-            toast[res.success ? "success" : "warning"](res.message);
+            toast[res.success ? "message" : "error"](res.message);
           })
         }
       >
@@ -104,7 +107,6 @@ const OrderDetailsTable = ({
   // Button to mark order as delivered
   const MarkAsDeliveredButton = () => {
     const [isPending, startTransition] = useTransition();
-    
     return (
       <Button
         type="button"
@@ -112,7 +114,7 @@ const OrderDetailsTable = ({
         onClick={() =>
           startTransition(async () => {
             const res = await deliverOrder(order.id);
-            toast[res.success ? "success" : "warning"](res.message);
+            toast[res.success ? "message" : "error"](res.message);
           })
         }
       >
@@ -231,13 +233,13 @@ const OrderDetailsTable = ({
               )}
 
               {/* Stripe Payment */}
-              {/* {!isPaid && paymentMethod === "Stripe" && stripeClientSecret && (
+              {!isPaid && paymentMethod === "Stripe" && stripeClientSecret && (
                 <StripePayment
                   priceInCents={Number(order.totalPrice) * 100}
                   orderId={order.id}
                   clientSecret={stripeClientSecret}
                 />
-              )} */}
+              )}
 
               {/* Cash On Delivery */}
               {isAdmin && !isPaid && paymentMethod === "CashOnDelivery" && (
