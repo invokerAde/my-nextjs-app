@@ -62,6 +62,7 @@ PurchaseReceiptEmail.PreviewProps = {
 
 const dateFormatter = new Intl.DateTimeFormat('en', { dateStyle: 'medium' });
 
+
 type OrderInformationProps = {
   order: Order;
 };
