@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { fetch as undiciFetch, Agent } from 'undici';
 
 /**
  * 检查 embedding provider 是否已配置。
@@ -17,12 +18,22 @@ function getClient(): OpenAI {
       'Embedding provider not configured. Set EMBEDDING_API_KEY, EMBEDDING_BASE_URL, and EMBEDDING_MODEL in .env',
     );
   }
-  return new OpenAI({
+
+  const opts: Record<string, unknown> = {
     apiKey: process.env.EMBEDDING_API_KEY,
     baseURL: process.env.EMBEDDING_BASE_URL,
     maxRetries: 2,
     timeout: Number(process.env.EMBEDDING_TIMEOUT_MS) || 15000,
-  });
+  };
+
+  // 阿里云内部端点 SSL 证书可能无法通过公网校验，通过 undici Agent 跳过
+  if (process.env.EMBEDDING_TLS_REJECT_UNAUTHORIZED === '0') {
+    const dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+    opts.fetch = undiciFetch;
+    (opts as any).fetchOptions = { dispatcher };
+  }
+
+  return new OpenAI(opts as any);
 }
 
 function buildEmbeddingRequest(input: string | string[]) {
