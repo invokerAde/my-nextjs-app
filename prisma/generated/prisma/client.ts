@@ -86,3 +86,23 @@ export type OrderItem = Prisma.OrderItemModel
  * 
  */
 export type Review = Prisma.ReviewModel
+/**
+ * Model ProductSpec
+ * 
+ */
+export type ProductSpec = Prisma.ProductSpecModel
+/**
+ * Model KnowledgeDocument
+ * 
+ */
+export type KnowledgeDocument = Prisma.KnowledgeDocumentModel
+/**
+ * Model KnowledgeChunk
+ * 
+ */
+export type KnowledgeChunk = Prisma.KnowledgeChunkModel
+/**
+ * Model ReviewInsight
+ * 
+ */
+export type ReviewInsight = Prisma.ReviewInsightModel
