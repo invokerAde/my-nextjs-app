@@ -1,4 +1,4 @@
-import { streamText } from 'ai';
+import { streamText, convertToModelMessages } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { retrieve } from '@/lib/services/retrieval.service';
 import { ANSWER_SYSTEM_PROMPT, CONSERVATIVE_ANSWER } from '@/lib/rag/templates/prompts';
@@ -15,7 +15,9 @@ export async function POST(req: Request) {
   const { messages, productId } = await req.json();
 
   const lastMessage = messages[messages.length - 1];
-  const query = lastMessage?.content || '';
+  const query = typeof lastMessage?.content === 'string'
+    ? lastMessage.content
+    : (lastMessage?.parts?.find((p: any) => p.type === 'text')?.text || '');
 
   // 前置检索：先查知识库，将结果注入上下文
   let retrievalContext = '';
@@ -37,10 +39,12 @@ export async function POST(req: Request) {
     ? `${ANSWER_SYSTEM_PROMPT}\n\n以下是相关的商品和知识库信息，请在回答时引用：${retrievalContext}`
     : ANSWER_SYSTEM_PROMPT;
 
+  const modelMessages = await convertToModelMessages(messages);
+
   const result = streamText({
     model: llm(process.env.OPENAI_CHAT_MODEL || 'deepseek-v4-pro'),
     system: systemPrompt,
-    messages,
+    messages: modelMessages,
   });
 
   return result.toUIMessageStreamResponse();
