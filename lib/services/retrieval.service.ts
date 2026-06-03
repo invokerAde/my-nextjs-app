@@ -52,7 +52,7 @@ async function ftsSearch(query: string, limit: number): Promise<RetrievalHit[]> 
 
   try {
     const rows = await prisma.$queryRawUnsafe(
-      `SELECT kc.id, kc.content, kd."productId", kd."docType",
+      `SELECT kc.id, kc.content, kc."productId", kc."docType",
               ts_rank(kc.tsvector, to_tsquery('simple', $1)) AS rank
        FROM active_knowledge_chunk_view kc
        WHERE kc.tsvector @@ to_tsquery('simple', $1)
@@ -85,12 +85,12 @@ async function vectorSearch(
     let whereClause = '';
     const params: any[] = [vectorLiteral, limit];
     if (productId) {
-      whereClause = `AND kd."productId" = $3`;
+      whereClause = `AND kc."productId" = $3`;
       params.push(productId);
     }
 
     const rows = await prisma.$queryRawUnsafe(
-      `SELECT kc.id, kc.content, kd."productId", kd."docType",
+      `SELECT kc.id, kc.content, kc."productId", kc."docType",
               1 - (kc.embedding <=> $1::vector) AS distance
        FROM active_knowledge_chunk_view kc
        WHERE kc.embedding IS NOT NULL ${whereClause}
