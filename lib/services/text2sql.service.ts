@@ -56,7 +56,13 @@ ORDER BY price ASC LIMIT 20` },
 let clientCache: OpenAI | null = null;
 function getClient(): OpenAI {
   if (!clientCache) {
-    clientCache = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: TIMEOUT_MS, maxRetries: 1 });
+    const baseURL = process.env.OPENAI_BASE_URL;
+    clientCache = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      ...(baseURL ? { baseURL } : {}),
+      timeout: TIMEOUT_MS,
+      maxRetries: 1,
+    });
   }
   return clientCache;
 }

@@ -1,8 +1,13 @@
 import { streamText, tool } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { createOpenAI } from '@ai-sdk/openai';
 import { z } from 'zod';
 import { retrieve } from '@/lib/services/retrieval.service';
 import { ANSWER_SYSTEM_PROMPT, CONSERVATIVE_ANSWER } from '@/lib/rag/templates/prompts';
+
+const llm = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+});
 
 export const maxDuration = 30;
 
@@ -10,7 +15,7 @@ export async function POST(req: Request) {
   const { messages, productId } = await req.json();
 
   const result = streamText({
-    model: openai(process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini'),
+    model: llm(process.env.OPENAI_CHAT_MODEL || 'deepseek-v4-pro'),
     system: ANSWER_SYSTEM_PROMPT,
     messages,
     tools: {

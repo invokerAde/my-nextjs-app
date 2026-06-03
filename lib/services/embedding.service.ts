@@ -3,8 +3,10 @@ import OpenAI from 'openai';
 const EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
 
 function getClient(): OpenAI {
+  const baseURL = process.env.OPENAI_BASE_URL;
   return new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
+    ...(baseURL ? { baseURL } : {}),
     maxRetries: 2,
     timeout: 15000,
   });
