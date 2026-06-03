@@ -7,7 +7,7 @@ import { useState, useCallback } from 'react';
 export function useChat(productId?: string) {
   const [input, setInput] = useState('');
 
-  const { messages, status, sendMessage, stop, error } = useAIChat({
+  const { messages, sendMessage, status, stop, error } = useAIChat({
     transport: new DefaultChatTransport({
       api: '/api/chat',
       body: { productId },
@@ -25,12 +25,12 @@ export function useChat(productId?: string) {
   );
 
   const handleSubmit = useCallback(
-    async (e?: { preventDefault?: () => void }) => {
+    (e?: { preventDefault?: () => void }) => {
       e?.preventDefault?.();
       const text = input.trim();
       if (!text || status === 'streaming') return;
       setInput('');
-      await sendMessage({ text });
+      sendMessage({ text });
     },
     [input, status, sendMessage],
   );
