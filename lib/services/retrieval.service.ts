@@ -2,6 +2,7 @@ import { prisma } from '@/db/prisma';
 import { classifyIntent } from '@/lib/services/intent.service';
 import { reciprocalRankFusion, RetrievalHit } from '@/lib/services/rrf.service';
 import { expandQuery } from '@/lib/rag/synonyms';
+import { isEmbeddingConfigured } from '@/lib/services/embedding.service';
 
 export interface RetrievalResult {
   hits: RetrievalHit[];
@@ -22,21 +23,20 @@ export async function retrieve(
   const tasks: Promise<RetrievalHit[]>[] = [];
   const usedSources: ('fts' | 'vector' | 'sql')[] = [];
 
-  // Route based on intent
-  if (intent.intent === 'realtime_price_stock') {
-    // Strong timeliness: FTS + vector only (Text2SQL will be added in Batch 5)
-    usedSources.push('fts', 'vector');
+  if (intent.intent === 'realtime_price_stock' || intent.intent === 'product_filter') {
+    usedSources.push('fts');
     tasks.push(ftsSearch(expandedQuery, TOP_K));
-    tasks.push(vectorSearch(expandedQuery, context?.productId, TOP_K));
-  } else if (intent.intent === 'product_filter') {
-    usedSources.push('fts', 'vector');
-    tasks.push(ftsSearch(expandedQuery, TOP_K));
-    tasks.push(vectorSearch(expandedQuery, context?.productId, TOP_K));
+    if (isEmbeddingConfigured()) {
+      usedSources.push('vector');
+      tasks.push(vectorSearch(expandedQuery, context?.productId, TOP_K));
+    }
   } else {
-    // product_detail, review_insight, policy_faq, hybrid: FTS + vector parallel
-    usedSources.push('fts', 'vector');
+    usedSources.push('fts');
     tasks.push(ftsSearch(expandedQuery, TOP_K));
-    tasks.push(vectorSearch(expandedQuery, context?.productId, TOP_K));
+    if (isEmbeddingConfigured()) {
+      usedSources.push('vector');
+      tasks.push(vectorSearch(expandedQuery, context?.productId, TOP_K));
+    }
   }
 
   const hitGroups = await Promise.all(tasks);
@@ -66,7 +66,8 @@ async function ftsSearch(query: string, limit: number): Promise<RetrievalHit[]> 
       id: r.id, score: Number(r.rank), source: 'fts' as const,
       content: r.content, metadata: { productId: r.productId, docType: r.docType },
     }));
-  } catch {
+  } catch (err) {
+    console.error('[ftsSearch] FTS query failed:', err);
     return [];
   }
 }
@@ -76,6 +77,8 @@ async function vectorSearch(
   productId?: string,
   limit: number = TOP_K,
 ): Promise<RetrievalHit[]> {
+  if (!isEmbeddingConfigured()) return [];
+
   try {
     const { generateEmbedding } = await import('@/lib/services/embedding.service');
     const embedding = await generateEmbedding(query);
@@ -102,7 +105,8 @@ async function vectorSearch(
       id: r.id, score: Number(r.distance), source: 'vector' as const,
       content: r.content, metadata: { productId: r.productId, docType: r.docType },
     }));
-  } catch {
+  } catch (err) {
+    console.error('[vectorSearch] Vector search failed — this provider may not support embeddings:', err);
     return [];
   }
 }

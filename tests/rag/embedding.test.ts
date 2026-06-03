@@ -1,21 +1,35 @@
-import { generateEmbedding, generateEmbeddings } from '@/lib/services/embedding.service';
+import { generateEmbedding, generateEmbeddings, isEmbeddingConfigured } from '@/lib/services/embedding.service';
 import OpenAI from 'openai';
 
 jest.mock('openai');
 
-describe('Embedding service', () => {
-  const mockCreate = jest.fn();
-  const mockEmbeddings = { create: mockCreate };
+const mockCreate = jest.fn();
+const mockEmbeddings = { create: mockCreate };
 
-  beforeEach(() => {
-    jest.clearAllMocks();
-    (OpenAI as unknown as jest.Mock).mockImplementation(() => ({
-      embeddings: mockEmbeddings,
-    }));
+beforeAll(() => {
+  process.env.EMBEDDING_API_KEY = 'test-key';
+  process.env.EMBEDDING_BASE_URL = 'https://api.openai.com/v1';
+  process.env.EMBEDDING_MODEL = 'text-embedding-3-small';
+});
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  (OpenAI as unknown as jest.Mock).mockImplementation(() => ({
+    embeddings: mockEmbeddings,
+  }));
+});
+
+describe('Embedding service', () => {
+  describe('isEmbeddingConfigured', () => {
+    it('returns true when EMBEDDING_API_KEY and EMBEDDING_MODEL are set', () => {
+      // Config was set in beforeAll, but the module-level cache may need re-import
+      // At minimum the function should behave correctly
+      expect(isEmbeddingConfigured()).toBe(true);
+    });
   });
 
   describe('generateEmbedding', () => {
-    it('calls OpenAI with normalized input and returns embedding', async () => {
+    it('calls the provider with normalized input and returns embedding', async () => {
       mockCreate.mockResolvedValue({
         data: [{ embedding: [0.1, 0.2, 0.3] }],
       });
@@ -40,7 +54,7 @@ describe('Embedding service', () => {
   });
 
   describe('generateEmbeddings', () => {
-    it('calls OpenAI with normalized inputs and returns embeddings', async () => {
+    it('calls provider with normalized inputs and returns embeddings', async () => {
       mockCreate.mockResolvedValue({
         data: [{ embedding: [0.1, 0.2] }, { embedding: [0.3, 0.4] }],
       });
