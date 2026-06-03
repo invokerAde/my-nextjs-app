@@ -1,22 +1,67 @@
-describe('Embedding service contract tests', () => {
-  it('should have embedding model config set', () => {
-    // Default fallback is text-embedding-3-small
-    const model = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
-    expect(model).toBe('text-embedding-3-small');
+import { generateEmbedding, generateEmbeddings } from '@/lib/services/embedding.service';
+import OpenAI from 'openai';
+
+jest.mock('openai');
+
+describe('Embedding service', () => {
+  const mockCreate = jest.fn();
+  const mockEmbeddings = { create: mockCreate };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (OpenAI as unknown as jest.Mock).mockImplementation(() => ({
+      embeddings: mockEmbeddings,
+    }));
   });
 
-  it('should expect embedding dimension of 1536 for text-embedding-3-small', () => {
-    // text-embedding-3-small produces 1536-dimensional vectors
-    const EXPECTED_DIMENSION = 1536;
-    expect(EXPECTED_DIMENSION).toBe(1536);
+  describe('generateEmbedding', () => {
+    it('calls OpenAI with normalized input and returns embedding', async () => {
+      mockCreate.mockResolvedValue({
+        data: [{ embedding: [0.1, 0.2, 0.3] }],
+      });
+
+      const result = await generateEmbedding('hello\nworld');
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        model: 'text-embedding-3-small',
+        input: 'hello world',
+      });
+      expect(result).toEqual([0.1, 0.2, 0.3]);
+    });
+
+    it('throws on empty input', async () => {
+      await expect(generateEmbedding('')).rejects.toThrow('Input text must be a non-empty string');
+      expect(mockCreate).not.toHaveBeenCalled();
+    });
+
+    it('throws on whitespace-only input', async () => {
+      await expect(generateEmbedding('   ')).rejects.toThrow('Input text must be a non-empty string');
+    });
   });
 
-  it('should normalize input by stripping newlines', () => {
-    // The generateEmbedding function replaces \n with space before sending
-    const inputNormalize = (text: string) => text.replace(/\n/g, ' ');
-    const raw = 'Line 1\nLine 2\nLine 3';
-    const normalized = inputNormalize(raw);
-    expect(normalized).not.toContain('\n');
-    expect(normalized).toBe('Line 1 Line 2 Line 3');
+  describe('generateEmbeddings', () => {
+    it('calls OpenAI with normalized inputs and returns embeddings', async () => {
+      mockCreate.mockResolvedValue({
+        data: [{ embedding: [0.1, 0.2] }, { embedding: [0.3, 0.4] }],
+      });
+
+      const result = await generateEmbeddings(['hello\nworld', 'foo\nbar']);
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        model: 'text-embedding-3-small',
+        input: ['hello world', 'foo bar'],
+      });
+      expect(result).toEqual([[0.1, 0.2], [0.3, 0.4]]);
+    });
+
+    it('throws on empty array', async () => {
+      await expect(generateEmbeddings([])).rejects.toThrow('Input texts must be a non-empty array');
+    });
+
+    it('throws on array with empty string', async () => {
+      await expect(generateEmbeddings(['valid', ''])).rejects.toThrow(
+        'Each text must be a non-empty string',
+      );
+    });
   });
 });

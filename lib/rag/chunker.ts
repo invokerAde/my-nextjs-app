@@ -76,6 +76,9 @@ export function chunkDocument(text: string, options: ChunkerOptions = {}): Chunk
     baseMetadata = {},
   } = options;
 
+  // Validate overlap is less than maxTokens
+  const safeOverlap = overlapTokens >= maxTokens ? maxTokens - 1 : overlapTokens;
+
   if (!text || text.trim().length === 0) return [];
 
   // Step 1: Split on paragraph boundaries
@@ -122,25 +125,20 @@ export function chunkDocument(text: string, options: ChunkerOptions = {}): Chunk
 
     chunkIndex++;
 
-    // Handle overlap: backtrack overlapTokens worth of sentences for the next chunk
-    if (i < sentences.length && overlapTokens > 0) {
+    // Handle overlap: backtrack safeOverlap tokens for next chunk
+    if (i < sentences.length && safeOverlap > 0) {
       let overlapBack = 0;
       let backtrackCount = 0;
-      // Backtrack sentences from the end of the current chunk
-      for (let j = chunkSentences.length - 1; j >= 0 && overlapBack < overlapTokens; j--) {
+      for (let j = chunkSentences.length - 1; j >= 0 && overlapBack < safeOverlap; j--) {
         overlapBack += estimateTokens(chunkSentences[j]);
         backtrackCount++;
       }
-      // Move the index back for overlap
       if (backtrackCount > 0) {
-        i = Math.max(i - backtrackCount, 0);
-        // But ensure we don't loop forever on a single sentence
-        if (i <= chunkIndex - 1) {
-          i = Math.max(i, 0);
-        }
-        // Safety: ensure forward progress
-        if (backtrackCount >= chunkSentences.length && sentences.length > 1) {
-          i = Math.min(i + 1, sentences.length);
+        const prevI = i;
+        i = i - backtrackCount;
+        // Ensure forward progress: advance at least 1 sentence
+        if (i <= 0 || i >= prevI) {
+          i = prevI;
         }
       }
     }
