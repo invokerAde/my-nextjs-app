@@ -28,8 +28,11 @@ model Product {
   isFeatured  Boolean     @default(false)
   banner      String?
   createdAt   DateTime    @default(now()) @db.Timestamp(6)
-  OrderItem   OrderItem[]
-  Review      Review[]
+  OrderItem          OrderItem[]
+  Review             Review[]
+  ProductSpec        ProductSpec[]
+  KnowledgeDocument  KnowledgeDocument[]
+  ReviewInsight      ReviewInsight[]
 }
 
 model User {
@@ -147,4 +150,63 @@ model Review {
   createdAt          DateTime @default(now()) @db.Timestamp(6)
   product            Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ProductSpec {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId String   @unique(map: "product_specs_productId_idx") @db.Uuid
+  specs     Json     @db.Json
+  createdAt DateTime @default(now()) @db.Timestamp(6)
+  updatedAt DateTime @updatedAt
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+model KnowledgeDocument {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId String?  @db.Uuid
+  docType   String
+  docHash   String
+  title     String
+  sourceRef String?
+  metadata  Json     @default("{}") @db.Json
+  version   Int      @default(1)
+  createdAt DateTime @default(now()) @db.Timestamp(6)
+  updatedAt DateTime @updatedAt
+  chunks    KnowledgeChunk[]
+  product   Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId], map: "kd_productId_idx")
+  @@index([docType], map: "kd_docType_idx")
+  @@index([docHash], map: "kd_docHash_idx")
+}
+
+model KnowledgeChunk {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId    String   @db.Uuid
+  chunkIndex    Int
+  content       String
+  tokenCount    Int?
+  metadata      Json     @default("{}") @db.Json
+  embedding     Unsupported("vector(1536)")?
+  tsvector      Unsupported("tsvector")?
+  isActive      Boolean  @default(false)
+  version       Int      @default(1)
+  createdAt     DateTime @default(now()) @db.Timestamp(6)
+  document      KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId], map: "kc_documentId_idx")
+  @@index([isActive], map: "kc_isActive_idx")
+}
+
+model ReviewInsight {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId   String   @db.Uuid
+  content     String
+  metadata    Json     @default("{}") @db.Json
+  version     Int      @default(1)
+  createdAt   DateTime @default(now()) @db.Timestamp(6)
+  updatedAt   DateTime @updatedAt
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, version], map: "ri_productId_version_idx")
 }
