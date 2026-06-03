@@ -1,4 +1,4 @@
-import { prisma } from '@/db/prisma';
+import { prisma } from '@/lib/rag/db';
 import { classifyIntent } from '@/lib/services/intent.service';
 import { reciprocalRankFusion, RetrievalHit } from '@/lib/services/rrf.service';
 import { expandQuery } from '@/lib/rag/synonyms';
@@ -51,9 +51,7 @@ async function ftsSearch(query: string, limit: number): Promise<RetrievalHit[]> 
   if (!tsquery) return [];
 
   try {
-    const rows = await prisma.$queryRawUnsafe<
-      Array<{ id: string; content: string; productId: string; docType: string; rank: number }>
-    >(
+    const rows = await prisma.$queryRawUnsafe(
       `SELECT kc.id, kc.content, kd."productId", kd."docType",
               ts_rank(kc.tsvector, to_tsquery('simple', $1)) AS rank
        FROM active_knowledge_chunk_view kc
@@ -62,7 +60,7 @@ async function ftsSearch(query: string, limit: number): Promise<RetrievalHit[]> 
       tsquery,
       limit,
     );
-    return rows.map(r => ({
+    return (rows as any[]).map(r => ({
       id: r.id, score: Number(r.rank), source: 'fts' as const,
       content: r.content, metadata: { productId: r.productId, docType: r.docType },
     }));
@@ -91,9 +89,7 @@ async function vectorSearch(
       params.push(productId);
     }
 
-    const rows = await prisma.$queryRawUnsafe<
-      Array<{ id: string; content: string; productId: string; docType: string; distance: number }>
-    >(
+    const rows = await prisma.$queryRawUnsafe(
       `SELECT kc.id, kc.content, kd."productId", kd."docType",
               1 - (kc.embedding <=> $1::vector) AS distance
        FROM active_knowledge_chunk_view kc
@@ -101,7 +97,7 @@ async function vectorSearch(
        ORDER BY kc.embedding <=> $1::vector LIMIT $2`,
       ...params,
     );
-    return rows.map(r => ({
+    return (rows as any[]).map(r => ({
       id: r.id, score: Number(r.distance), source: 'vector' as const,
       content: r.content, metadata: { productId: r.productId, docType: r.docType },
     }));

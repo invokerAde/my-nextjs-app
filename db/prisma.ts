@@ -1,6 +1,6 @@
 import 'dotenv/config'; // 1. 必须加载环境变量
 import { PrismaNeon } from '@prisma/adapter-neon';
-import { PrismaClient } from '@/prisma/generated/prisma/client'; 
+import { PrismaClient } from '@/prisma/generated/prisma/client';
 
 // 适配器：使 Prisma 使用 Neon 的 HTTP/WebSocket 驱动
 const adapter = new PrismaNeon({ connectionString: process.env.DATABASE_URL });

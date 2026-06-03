@@ -1,9 +1,8 @@
 'use server';
 
-import { prisma } from '@/db/prisma';
+import { prisma } from '@/lib/rag/db';
 import { cleanReviewText } from '@/lib/rag/cleaner';
-import { chunkDocument } from '@/lib/rag/chunker';
-import { computeDocHash } from '@/lib/rag/hasher';
+import { indexDocument } from '@/lib/services/index.service';
 
 const REVIEW_THRESHOLD = Number(process.env.REVIEW_DIRECT_CHUNK_THRESHOLD) || 5;
 
@@ -54,7 +53,7 @@ async function ingestDirectReviews(productId: string): Promise<IngestionResult> 
     await prisma.knowledgeDocument.delete({ where: { id: oldDoc.id } });
   }
 
-  await upsertKnowledgeDocument({
+  await indexDocument({
     productId,
     docType: 'review_direct',
     title: `用户评论直入 - ${productId}`,
@@ -107,7 +106,7 @@ async function ingestAggregatedReviews(productId: string): Promise<IngestionResu
     where: { productId, docType: { in: ['review_direct', 'review_insight'] } },
   });
 
-  await upsertKnowledgeDocument({
+  await indexDocument({
     productId,
     docType: 'review_insight',
     title: `评论聚合洞察 v${version} - ${productId}`,
@@ -144,79 +143,4 @@ function simpleAggregate(cleanedTexts: string[], productId: string): string {
     '用户反馈摘要:',
     ...cleanedTexts.slice(0, 30),
   ].join('\n');
-}
-
-async function upsertKnowledgeDocument(params: {
-  productId: string;
-  docType: string;
-  title: string;
-  content: string;
-}): Promise<void> {
-  const docHash = computeDocHash(params.content);
-  const existing = await prisma.knowledgeDocument.findFirst({
-    where: { productId: params.productId, docType: params.docType, docHash },
-  });
-
-  if (existing) return; // Content unchanged, skip
-
-  // Deactivate old versions
-  const oldDocs = await prisma.knowledgeDocument.findMany({
-    where: { productId: params.productId, docType: params.docType },
-  });
-  for (const od of oldDocs) {
-    if (od.docHash !== docHash) {
-      await prisma.knowledgeChunk.updateMany({
-        where: { documentId: od.id, isActive: true },
-        data: { isActive: false },
-      });
-    }
-  }
-
-  const version = oldDocs.length > 0
-    ? Math.max(...oldDocs.map(d => d.version)) + 1
-    : 1;
-
-  const doc = await prisma.knowledgeDocument.create({
-    data: {
-      productId: params.productId,
-      docType: params.docType,
-      docHash,
-      title: params.title,
-      version,
-    },
-  });
-
-  const chunks = chunkDocument(params.content);
-  for (const c of chunks) {
-    await prisma.knowledgeChunk.create({
-      data: {
-        documentId: doc.id,
-        chunkIndex: c.index,
-        content: c.content,
-        tokenCount: c.tokenCount,
-        isActive: true,
-        version,
-      },
-    });
-  }
-
-  // Async clean old versions
-  deleteOldVersions(params.productId, params.docType, doc.id).catch(err =>
-    console.error('Old version cleanup failed:', err),
-  );
-}
-
-async function deleteOldVersions(
-  productId: string,
-  docType: string,
-  keepDocId: string,
-): Promise<void> {
-  const oldDocs = await prisma.knowledgeDocument.findMany({
-    where: { productId, docType, id: { not: keepDocId } },
-    select: { id: true },
-  });
-  for (const od of oldDocs) {
-    await prisma.knowledgeChunk.deleteMany({ where: { documentId: od.id } });
-    await prisma.knowledgeDocument.delete({ where: { id: od.id } });
-  }
 }
