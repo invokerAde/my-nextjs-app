@@ -1,12 +1,13 @@
 import { streamText, tool } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
 import { retrieve } from '@/lib/services/retrieval.service';
 import { ANSWER_SYSTEM_PROMPT, CONSERVATIVE_ANSWER } from '@/lib/rag/templates/prompts';
 
-const llm = createOpenAI({
+const llm = createOpenAICompatible({
+  name: 'deepseek',
   apiKey: process.env.OPENAI_API_KEY,
-  baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+  baseURL: process.env.OPENAI_BASE_URL || 'https://api.deepseek.com/v1',
 });
 
 export const maxDuration = 30;
