@@ -9,6 +9,7 @@ import { getMyCart } from "@/lib/actions/cart.actions";
 import { auth } from "@/auth";
 import ReviewList from "./review-list";
 import Rating from "@/components/shared/product/rating";
+import { AiAssistantTrigger } from '@/components/shared/ai-assistant/ai-assistant-trigger';
 const ProductDetailsPage = async (props: {
   params: Promise<{ slug: string }>;
 }) => {
@@ -97,6 +98,7 @@ const ProductDetailsPage = async (props: {
           productSlug={product.slug}
         />
       </section>
+      {product && <AiAssistantTrigger productId={product.id} />}
     </>
   );
 };

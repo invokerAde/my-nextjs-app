@@ -6,6 +6,7 @@ import { formatError } from '../utils';
 import { auth } from '@/auth';
 import { prisma } from '@/db/prisma';
 import { revalidatePath } from 'next/cache';
+import { ingestProductReviews } from '@/lib/services/review-ingestion.service';
 
 // Create & Update Reviews
 export async function createUpdateReview(
@@ -72,6 +73,10 @@ export async function createUpdateReview(
         },
       });
     });
+
+    ingestProductReviews(review.productId).catch(err =>
+      console.error('Review ingestion failed:', err)
+    );
 
     revalidatePath(`/product/${product.slug}`);
 
