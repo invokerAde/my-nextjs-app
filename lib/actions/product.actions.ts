@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { insertProductSchema} from '../validators';
 import { z } from 'zod';
 import { Prisma } from '@/prisma/generated/prisma/client';
+import { indexProductDetail } from '@/lib/services/index.service';
 
 
 // Get latest products
@@ -140,7 +141,11 @@ export async function deleteProduct(id: string) {
 export async function createProduct(data: z.infer<typeof insertProductSchema>) {
   try {
     const product = insertProductSchema.parse(data);
-    await prisma.product.create({ data: product });
+    const createdProduct = await prisma.product.create({ data: product });
+
+    indexProductDetail(createdProduct.id).catch(err =>
+      console.error('Index product detail failed:', err)
+    );
 
     revalidatePath('/admin/products');
 
@@ -167,6 +172,10 @@ export async function updateProduct(data: z.infer<typeof insertProductSchema>) {
       where: { id: product.id },
       data: product,
     });
+
+    indexProductDetail(product.id!).catch(err =>
+      console.error('Index product detail failed:', err)
+    );
 
     revalidatePath('/admin/products');
 
