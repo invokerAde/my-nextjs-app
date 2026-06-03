@@ -25,16 +25,26 @@ function getClient(): OpenAI {
   });
 }
 
+function buildEmbeddingRequest(input: string | string[]) {
+  const params: Record<string, unknown> = {
+    model: process.env.EMBEDDING_MODEL!,
+    input,
+  };
+  const dimensions = process.env.EMBEDDING_DIMENSIONS;
+  if (dimensions) {
+    params.dimensions = parseInt(dimensions, 10);
+  }
+  return params;
+}
+
 export async function generateEmbedding(text: string): Promise<number[]> {
   if (!text || typeof text !== 'string' || text.trim().length === 0) {
     throw new Error('Input text must be a non-empty string');
   }
 
   try {
-    const response = await getClient().embeddings.create({
-      model: process.env.EMBEDDING_MODEL!,
-      input: text.replace(/\n/g, ' '),
-    });
+    const params = buildEmbeddingRequest(text.replace(/\n/g, ' '));
+    const response = await getClient().embeddings.create(params as any);
 
     if (!response.data?.[0]?.embedding) {
       throw new Error('Embedding provider returned empty response');
@@ -63,10 +73,8 @@ export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   }
 
   try {
-    const response = await getClient().embeddings.create({
-      model: process.env.EMBEDDING_MODEL!,
-      input: texts.map(t => t.replace(/\n/g, ' ')),
-    });
+    const params = buildEmbeddingRequest(texts.map(t => t.replace(/\n/g, ' ')));
+    const response = await getClient().embeddings.create(params as any);
 
     const embeddings = response.data.map(d => d.embedding);
 

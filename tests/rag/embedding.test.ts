@@ -36,10 +36,9 @@ describe('Embedding service', () => {
 
       const result = await generateEmbedding('hello\nworld');
 
-      expect(mockCreate).toHaveBeenCalledWith({
-        model: 'text-embedding-3-small',
-        input: 'hello world',
-      });
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'text-embedding-3-small', input: 'hello world' }),
+      );
       expect(result).toEqual([0.1, 0.2, 0.3]);
     });
 
@@ -61,10 +60,9 @@ describe('Embedding service', () => {
 
       const result = await generateEmbeddings(['hello\nworld', 'foo\nbar']);
 
-      expect(mockCreate).toHaveBeenCalledWith({
-        model: 'text-embedding-3-small',
-        input: ['hello world', 'foo bar'],
-      });
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'text-embedding-3-small', input: ['hello world', 'foo bar'] }),
+      );
       expect(result).toEqual([[0.1, 0.2], [0.3, 0.4]]);
     });
 
