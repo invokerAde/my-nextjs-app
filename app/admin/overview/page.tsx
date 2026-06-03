@@ -28,10 +28,8 @@ const AdminOverviewPage = async () => {
 
   return (
     <div className='space-y-2'>
-      <div className="flex items-center justify-between">
-        <h1 className='h2-bold'>Dashboard</h1>
-        <BackfillButton />
-      </div>
+      <h1 className='h2-bold'>Dashboard</h1>
+      <BackfillButton />
       <div className='grid gap-4 md:grid-cols-2 lg:grid-cols-4'>
         <Card>
           <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
