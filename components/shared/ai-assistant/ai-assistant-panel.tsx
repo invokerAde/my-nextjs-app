@@ -21,7 +21,7 @@ export function AiAssistantPanel({
   productId?: string;
   onClose: () => void;
 }) {
-  const { messages, input, handleInputChange, handleSubmit, status } = useChat(productId);
+  const { messages, input, handleInputChange, handleSubmit, status, error, sendMessage } = useChat(productId);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,8 +50,8 @@ export function AiAssistantPanel({
                   size="sm"
                   className="w-full justify-start text-left"
                   onClick={() => {
-                    const fakeEvent = { target: { value: q } } as any;
-                    handleInputChange(fakeEvent);
+                    if (status === 'streaming') return;
+                    sendMessage({ text: q });
                   }}
                 >
                   {q}
@@ -65,10 +65,22 @@ export function AiAssistantPanel({
           <ChatMessageCard key={i} message={msg} />
         ))}
 
-        {isLoading && messages.length > 0 && (
+        {isLoading && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
             <span>思考中...</span>
+          </div>
+        )}
+
+        {error && (
+          <div className="rounded border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+            错误: {error.message}
+          </div>
+        )}
+
+        {status === 'error' && !error && (
+          <div className="rounded border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+            发生未知错误
           </div>
         )}
       </div>
