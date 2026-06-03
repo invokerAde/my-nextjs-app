@@ -287,7 +287,7 @@ export async function generateRagFixtures(): Promise<{
       await ragPrisma.knowledgeChunk.deleteMany({ where: { documentId: d.id } });
     }
     await ragPrisma.knowledgeDocument.deleteMany({ where: { sourceRef: SOURCE_REF } });
-    await ragPrisma.reviewInsight.deleteMany({ where: { id: { not: '' } } });
+    await rp.$executeRawUnsafe(`DELETE FROM "ReviewInsight"`);
 
     // Clean old synthetic product specs
     await rp.$executeRawUnsafe(`DELETE FROM "ProductSpec"`);
@@ -388,11 +388,12 @@ export async function generateRagFixtures(): Promise<{
   for (const faq of POLICY_FAQS) {
     try {
       await indexDocument({
-        productId: '__policy__',
+        productId: null as any,
         docType: 'policy_faq',
         title: faq.title,
         content: faq.content,
         sourceRef: SOURCE_REF,
+        groupKey: `policy_faq:${faq.title}`,
       });
       policyDocsCount++;
     } catch (err: any) {

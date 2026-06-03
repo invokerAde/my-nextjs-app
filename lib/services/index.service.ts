@@ -6,16 +6,19 @@ import { computeDocHash } from '@/lib/rag/hasher';
 import { isEmbeddingConfigured } from '@/lib/services/embedding.service';
 
 export interface IndexDocumentParams {
-  productId: string;
+  productId: string | null;
   docType: string;
   title: string;
   content: string;
   sourceRef?: string;
+  /** 覆盖默认的 (productId, docType) 分组去重键，用于 policy FAQ 等多文档同类型场景 */
+  groupKey?: string;
 }
 
 /**
  * 索引单个文档：chunk → embedding → tsvector → 写入 chunk。
  * 内容未变时跳过（基于 docHash）。
+ * 默认按 (productId, docType) 分组去重；传 groupKey 时按 groupKey 分组。
  */
 export async function indexDocument(params: IndexDocumentParams): Promise<{
   action: 'created' | 'updated' | 'skipped';
@@ -25,7 +28,7 @@ export async function indexDocument(params: IndexDocumentParams): Promise<{
 
   // 检查是否有未变的已激活文档
   const existing = await prisma.knowledgeDocument.findFirst({
-    where: { productId: params.productId, docType: params.docType, docHash },
+    where: { productId: params.productId as any, docType: params.docType, docHash },
     include: { chunks: { where: { isActive: true }, take: 1 } },
   });
 
@@ -33,26 +36,30 @@ export async function indexDocument(params: IndexDocumentParams): Promise<{
     return { action: 'skipped', docId: existing.id };
   }
 
-  // 旧版本 deactivate
+  // 旧版本 deactivate（按分组键，默认 productId+docType）
+  const dedupeFilter = params.groupKey
+    ? { document: { sourceRef: params.groupKey } }
+    : { document: { productId: params.productId as any, docType: params.docType } };
+
   await prisma.knowledgeChunk.updateMany({
-    where: {
-      document: { productId: params.productId, docType: params.docType },
-      isActive: true,
-    },
+    where: { ...dedupeFilter, isActive: true },
     data: { isActive: false },
   });
 
-  // 计算版本号
+  // 计算版本号（按分组键聚合）
+  const versionWhere = params.groupKey
+    ? { sourceRef: params.groupKey }
+    : { productId: params.productId as any, docType: params.docType };
   const maxVersion = await prisma.knowledgeDocument.aggregate({
     _max: { version: true },
-    where: { productId: params.productId, docType: params.docType },
+    where: versionWhere,
   });
   const version = (maxVersion._max.version ?? 0) + 1;
 
   // 创建 document
   const doc = await prisma.knowledgeDocument.create({
     data: {
-      productId: params.productId,
+      productId: params.productId as any,
       docType: params.docType,
       docHash,
       title: params.title,
@@ -87,9 +94,15 @@ export async function indexDocument(params: IndexDocumentParams): Promise<{
   }
 
   // 异步清理旧版本
-  deleteOldVersions(params.productId, params.docType, doc.id).catch(err =>
-    console.error('Old version cleanup failed:', err),
-  );
+  if (params.groupKey) {
+    deleteOldVersions({ sourceRef: params.groupKey }, doc.id).catch(err =>
+      console.error('Old version cleanup failed:', err),
+    );
+  } else {
+    deleteOldVersions({ productId: params.productId as any, docType: params.docType }, doc.id).catch(err =>
+      console.error('Old version cleanup failed:', err),
+    );
+  }
 
   return { action: existing ? 'updated' : 'created', docId: doc.id };
 }
@@ -203,12 +216,11 @@ function buildTsvectorInput(content: string): string {
 }
 
 async function deleteOldVersions(
-  productId: string,
-  docType: string,
+  filter: Record<string, unknown>,
   keepDocId: string,
 ): Promise<void> {
   const oldDocs = await prisma.knowledgeDocument.findMany({
-    where: { productId, docType, id: { not: keepDocId } },
+    where: { ...filter, id: { not: keepDocId } } as any,
     select: { id: true },
   });
   for (const od of oldDocs) {
