@@ -1,14 +1,27 @@
 'use server';
 
-import { prisma } from '@/lib/rag/db';
+import 'dotenv/config';
 import { PrismaClient } from '@/prisma/generated/prisma/client';
 import { PrismaNeon } from '@prisma/adapter-neon';
-import { indexDocument, indexProductDetail } from '@/lib/services/index.service';
+import { indexDocument } from '@/lib/services/index.service';
 import { ingestProductReviews } from '@/lib/services/review-ingestion.service';
 
 const SOURCE_REF = 'synthetic-rag-fixtures-v1';
 
-// ── Spec templates by category ──
+// ── Lazy raw PrismaClient (no $extends, for direct CRUD on new models) ──
+
+let _rawPrisma: PrismaClient | null = null;
+
+function getRawPrisma(): PrismaClient {
+  if (!_rawPrisma) {
+    _rawPrisma = new PrismaClient({
+      adapter: new PrismaNeon({ connectionString: process.env.DATABASE_URL }),
+    });
+  }
+  return _rawPrisma;
+}
+
+// ── Spec templates ──
 
 interface SpecTemplate {
   material: string[];
@@ -115,101 +128,49 @@ const MIXED_REVIEWS = [
 // ── Policy FAQ templates ──
 
 const POLICY_FAQS = [
-  {
-    title: '退换货政策',
-    content: `Q: 7天无理由退货怎么操作？
-A: 签收后7天内，保持商品完好（未下水、吊牌完整、不影响二次销售），可直接在订单详情页申请退货。审核通过后系统会生成退货地址，寄回后3个工作日内退款。
-
-Q: 退货后多久能收到退款？
-A: 仓库签收退货后，退款会在1-3个工作日原路返回。支付宝/微信支付通常1个工作日内到账，银行卡支付需要3-5个工作日。
-
-Q: 换货的流程是怎样的？
-A: 先在订单页申请换货并注明原因，审核通过后寄回原商品。收到换货商品后，仓库会在2个工作日内发出新商品，来回运费由我们承担。
-
-Q: 已经下水洗过的衣服还能退吗？
-A: 很遗憾，已下水或洗涤过的商品无法办理退换货，因为影响了二次销售。建议试穿时保留吊牌，确认合适后再说洗唛。
-
-Q: 吊牌拆了但没洗过能退吗？
-A: 如果吊牌拆了但衣服没有穿着痕迹和洗涤痕迹，部分情况下可以协商退货。建议保留原包装，联系客服拍图确认后评估。
-
-Q: 海外订单可以退货吗？
-A: 目前退货流程仅支持中国大陆地址。海外订单如有质量问题可联系客服协商处理方案。`,
-  },
-  {
-    title: '发货与物流',
-    content: `Q: 下单后多久发货？
-A: 工作日16:00前下单当天发出，之后次工作日发。周末和节假日顺延至下一个工作日。一般48小时内都会发出。
-
-Q: 发什么快递？能指定吗？
-A: 默认发中通/圆通/申通随机，满299发顺丰。如需指定快递请在订单备注，但可能产生额外费用。
-
-Q: 多久能收到？
-A: 江浙沪通常1-2天，其他地区3-5天，偏远地区5-7天。遇大促期物流可能延迟1-2天。
-
-Q: 怎么查物流？
-A: 发货后订单详情页会显示运单号，可直接点击追踪。如果长时间未更新，联系客服帮您核实。
-
-Q: 快递丢失了怎么办？
-A: 如果物流信息超过5天未更新，联系客服核实。确认丢失后我们会安排补发或全额退款，不需要您承担任何费用。`,
-  },
-  {
-    title: '支付与发票',
-    content: `Q: 支持哪些支付方式？
-A: 支持微信支付、支付宝、银行卡支付、PayPal和Stripe（外币卡）。海外用户建议使用PayPal或Stripe。
-
-Q: 可以开票吗？
-A: 支持开具增值税普通发票和专用发票。下单时在备注里填写开票信息（单位名称+税号），电子发票会在确认收货后3个工作日内发到您的邮箱。
-
-Q: 发票可以补开吗？
-A: 订单完成后30天内可以联系客服补开发票。超过30天的订单可能无法补开，建议收货确认时及时申请。
-
-Q: 付款后还可以修改订单吗？
-A: 订单未发货前可以联系客服修改收货地址或尺码规格。已发货的订单不支持修改。
-
-Q: 为什么付款失败了？
-A: 可能原因：银行卡限额、信用卡授权失败、网络超时。建议更换支付方式或稍后再试。如果多次失败，联系客服排查。`,
-  },
-  {
-    title: '售后与质量问题',
-    content: `Q: 收到的衣服有质量问题怎么办？
-A: 签收后48小时内拍照联系客服。质量问题（破洞、严重色差、开线、污渍等）我们承担来回运费退换。超过48小时的需说明原因。
-
-Q: 什么算质量问题？
-A: 明显的破洞/开线、严重色差（与商品页差异过大）、污渍、拉链损坏、扣子脱落。轻微色差、线头、褶皱不算质量问题。
-
-Q: 穿了几次坏了能保修吗？
-A: 目前不提供穿后保修。如果穿着后短期内出现非人为损坏（如正常穿着下开线），可以联系客服协商处理方案。
-
-Q: 申请售后需要什么材料？
-A: 需要提供：订单号、商品实物照片（清晰展示问题部位）、外包装照片、简要描述问题。材料齐全可以加快处理速度。
-
-Q: 售后处理时效是多久？
-A: 提交售后申请后24小时内客服会回复。确认为质量问题后，退换货流程通常3-5个工作日完成。`,
-  },
-  {
-    title: '清洗与保养建议',
-    content: `Q: 衣服怎么洗不容易变形？
-A: 建议反面洗涤、使用洗衣袋、选择轻柔模式。水温不要超过30°C。棉质衣物洗后平铺晾干，不要用力拧干和暴晒。
-
-Q: 深色衣服掉色怎么办？
-A: 深色衣物（尤其是牛仔和黑色）首次洗涤建议用盐水浸泡30分钟固色。前几次单独洗涤，不要和浅色混洗。
-
-Q: 衬衫怎么熨烫？
-A: 棉质衬衫建议用蒸汽熨斗中温熨烫。先熨领子再熨袖口，然后熨前后片。熨烫前在衣服上喷少许水，效果更好。
-
-Q: 羊毛/羊绒怎么保养？
-A: 建议干洗或使用专用洗涤液手洗。不可机洗、不可拧干、不可暴晒。平铺晾干，存放时使用防蛀片。
-
-Q: 白色衣服发黄了怎么办？
-A: 可以用稀释的白醋或小苏打浸泡，再用彩漂液处理。日常穿着后及时清洗，不要久放不洗，汗渍会导致衣物发黄。`,
-  },
+  { title: '退换货政策', content: buildFAQ([
+    ['7天无理由退货怎么操作？', '签收后7天内，保持商品完好（未下水、吊牌完整、不影响二次销售），可直接在订单详情页申请退货。审核通过后系统会生成退货地址，寄回后3个工作日内退款。'],
+    ['退货后多久能收到退款？', '仓库签收退货后，退款会在1-3个工作日原路返回。支付宝/微信支付通常1个工作日内到账，银行卡支付需要3-5个工作日。'],
+    ['换货的流程是怎样的？', '先在订单页申请换货并注明原因，审核通过后寄回原商品。仓库收到后2个工作日内发出新商品，来回运费由我们承担。'],
+    ['已经下水洗过的衣服还能退吗？', '已下水或洗涤过的商品无法办理退换货。建议试穿时保留吊牌，确认合适后再拆洗唛。'],
+    ['吊牌拆了但没洗过能退吗？', '如果吊牌拆了但衣服没有穿着痕迹和洗涤痕迹，部分情况下可协商退货。建议保留原包装联系客服。'],
+    ['海外订单可以退货吗？', '目前仅支持中国大陆地址退货。海外订单如有质量问题可联系客服协商处理。'],
+  ]) },
+  { title: '发货与物流', content: buildFAQ([
+    ['下单后多久发货？', '工作日16:00前下单当天发出，之后次工作日发。周末节假日顺延。一般48小时内发出。'],
+    ['发什么快递？能指定吗？', '默认中通/圆通/申通随机，满299发顺丰。如需指定快递请订单备注。'],
+    ['多久能收到？', '江浙沪1-2天，其他地区3-5天，偏远地区5-7天。大促期可能延迟1-2天。'],
+    ['怎么查物流？', '发货后订单详情页显示运单号，可直接点击追踪。长时间未更新联系客服核实。'],
+    ['快递丢失了怎么办？', '物流信息超过5天未更新请联系客服。确认丢失后安排补发或全额退款。'],
+  ]) },
+  { title: '支付与发票', content: buildFAQ([
+    ['支持哪些支付方式？', '支持微信支付、支付宝、银行卡、PayPal和Stripe。海外用户建议使用PayPal或Stripe。'],
+    ['可以开票吗？', '支持增值税普通发票和专用发票。下单时备注开票信息，电子发票确认收货后3个工作日内发至邮箱。'],
+    ['发票可以补开吗？', '订单完成后30天内可联系客服补开。超过30天可能无法补开。'],
+    ['付款后还可以修改订单吗？', '未发货前可联系客服修改地址或规格。已发货订单不支持修改。'],
+    ['为什么付款失败了？', '可能原因：银行卡限额、信用卡授权失败、网络超时。建议更换支付方式或稍后重试。'],
+  ]) },
+  { title: '售后与质量问题', content: buildFAQ([
+    ['收到的衣服有质量问题怎么办？', '签收后48小时内拍照联系客服。质量问题（破洞、严重色差、开线、污渍等）我们承担来回运费退换。'],
+    ['什么算质量问题？', '明显破洞/开线、严重色差、污渍、拉链损坏、扣子脱落。轻微色差、线头、褶皱不算质量问题。'],
+    ['穿了几次坏了能保修吗？', '目前不提供穿后保修。正常穿着下短期出现非人为损坏可协商处理。'],
+    ['申请售后需要什么材料？', '需提供：订单号、商品实物照片（清晰展示问题部位）、外包装照片、简要问题描述。'],
+    ['售后处理时效？', '提交后24小时内客服回复。确认为质量问题后，退换货流程通常3-5个工作日完成。'],
+  ]) },
+  { title: '清洗与保养建议', content: buildFAQ([
+    ['衣服怎么洗不容易变形？', '建议反面洗涤、使用洗衣袋、轻柔模式。水温不超过30°C。棉质衣物洗后平铺晾干，不可暴晒。'],
+    ['深色衣服掉色怎么办？', '深色衣物首次洗涤建议盐水浸泡30分钟固色。前几次单独洗涤，不与浅色混洗。'],
+    ['衬衫怎么熨烫？', '棉质衬衫建议蒸汽熨斗中温熨烫。先熨领子再熨袖口，然后前后片。熨前喷少许水效果更好。'],
+    ['羊毛/羊绒怎么保养？', '建议干洗或专用洗涤液手洗。不可机洗、不可拧干、不可暴晒。平铺晾干，存放时使用防蛀片。'],
+    ['白色衣服发黄了怎么办？', '可用稀释白醋或小苏打浸泡，再用彩漂液处理。日常穿着后及时清洗，汗渍会导致发黄。'],
+  ]) },
 ];
 
-// ── Main generator ──
+function buildFAQ(entries: [string, string][]): string {
+  return entries.map(([q, a]) => `Q: ${q}\nA: ${a}`).join('\n\n');
+}
 
-const rawPrisma = new PrismaClient({
-  adapter: new PrismaNeon({ connectionString: process.env.DATABASE_URL }),
-});
+// ── Helpers ──
 
 function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -224,7 +185,7 @@ function randBetween(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function buildSpecJson(category: string, product: { name: string; brand: string }): Record<string, string> {
+function buildSpecJson(category: string): Record<string, string> {
   const tpl = SPEC_MAP[category] ?? SHIRT_SPECS;
   return {
     material: pick(tpl.material),
@@ -237,48 +198,70 @@ function buildSpecJson(category: string, product: { name: string; brand: string 
     occasion: pick(tpl.occasion),
     season: pick(tpl.season),
     care_instructions: tpl.care_instructions,
-    size_advice: ['建议按正常尺码购买', '建议买小一码', '建议买大一码', '正常尺码，偏修身可选大一码'][randBetween(0, 3)],
+    size_advice: ['建议按正常尺码购买', '建议买小一码', '建议买大一码', '正常尺码偏修身可选大一码'][randBetween(0, 3)],
     highlights: pickN(tpl.highlights, 3).join('；'),
     limitations: pickN(tpl.limitations, 2).join('；'),
   };
 }
 
-function generateReviews(product: { name: string; category: string }, count: number): string[] {
+function generateReviews(count: number): string[] {
   const reviews: string[] = [];
-
-  // Fit (2-4)
   const fitCount = randBetween(2, 4);
   for (let i = 0; i < fitCount; i++) {
     reviews.push(i === 0 ? pick(FIT_REVIEWS.negative) : pick(FIT_REVIEWS.positive));
   }
-
-  // Fabric / comfort (2-4)
   const fabricCount = randBetween(2, 4);
   for (let i = 0; i < fabricCount; i++) {
     reviews.push(i < 2 ? pick(FABRIC_REVIEWS.positive) : pick(FABRIC_REVIEWS.negative));
   }
-
-  // Color / workmanship (1-3)
   const cwCount = randBetween(1, 3);
   for (let i = 0; i < cwCount; i++) {
     reviews.push(pick(COLOR_WORKMANSHIP_REVIEWS));
   }
-
-  // Noise (1-2) — logistics/customer service, tests cleaner
   const noiseCount = randBetween(1, 2);
   for (let i = 0; i < noiseCount; i++) {
     reviews.push(pick(NOISE_REVIEWS));
   }
-
-  // Mixed (1-2)
   const mixedCount = randBetween(1, 2);
   for (let i = 0; i < mixedCount; i++) {
     reviews.push(pick(MIXED_REVIEWS));
   }
-
-  // Shuffle and truncate to target count
   return reviews.sort(() => Math.random() - 0.5).slice(0, count);
 }
+
+function buildProductDetailContent(
+  product: { name: string; brand: string; category: string; description: string },
+  specs: Record<string, string>,
+): string {
+  return [
+    `${product.name}`,
+    `品牌：${product.brand}`,
+    `类目：${product.category}`,
+    '',
+    `商品描述：${product.description}`,
+    '',
+    '规格参数：',
+    `- 材质：${specs.material}`,
+    `- 版型：${specs.fit}`,
+    `- 领型：${specs.collar}`,
+    `- 袖长：${specs.sleeve_length}`,
+    `- 厚度：${specs.thickness}`,
+    `- 弹性：${specs.stretch}`,
+    `- 透气性：${specs.breathability}`,
+    `- 适用场景：${specs.occasion}`,
+    `- 适用季节：${specs.season}`,
+    '',
+    `亮点：${specs.highlights}`,
+    '',
+    `注意事项：${specs.limitations}`,
+    '',
+    `洗护建议：${specs.care_instructions}`,
+    '',
+    `尺码建议：${specs.size_advice}`,
+  ].join('\n');
+}
+
+// ── Main export ──
 
 export async function generateRagFixtures(): Promise<{
   products: number;
@@ -289,31 +272,60 @@ export async function generateRagFixtures(): Promise<{
   errors: string[];
 }> {
   const errors: string[] = [];
+  const rp = getRawPrisma();
 
   console.log('[fixtures] Cleaning old synthetic data...');
-  await rawPrisma.productSpec.deleteMany({ where: { id: { not: '' } } });
 
-  // Clean synthetic documents + chunks
-  const oldDocs = await prisma.knowledgeDocument.findMany({
-    where: { sourceRef: SOURCE_REF },
+  try {
+    // Clean old synthetic knowledge docs + chunks
+    const { prisma: ragPrisma } = await import('@/lib/rag/db');
+    const oldDocs = await ragPrisma.knowledgeDocument.findMany({
+      where: { sourceRef: SOURCE_REF },
+      select: { id: true },
+    });
+    for (const d of oldDocs) {
+      await ragPrisma.knowledgeChunk.deleteMany({ where: { documentId: d.id } });
+    }
+    await ragPrisma.knowledgeDocument.deleteMany({ where: { sourceRef: SOURCE_REF } });
+    await ragPrisma.reviewInsight.deleteMany({ where: { id: { not: '' } } });
+
+    // Clean old synthetic product specs
+    await rp.$executeRawUnsafe(`DELETE FROM "ProductSpec"`);
+    // Clean old reviews (this is a fixture tool, safe to wipe)
+    await rp.$executeRawUnsafe(`DELETE FROM "Review"`);
+
+    console.log('[fixtures] Old data cleaned.');
+  } catch (err: any) {
+    errors.push(`Cleanup: ${err.message}`);
+    console.error('[fixtures] Cleanup error:', err);
+  }
+
+  // ── Ensure synthetic user exists ──
+  let fixtureUserId: string;
+  const existingUser = await rp.user.findFirst({
+    where: { email: 'admin@example.com' },
     select: { id: true },
   });
-  for (const d of oldDocs) {
-    await prisma.knowledgeChunk.deleteMany({ where: { documentId: d.id } });
+  if (existingUser) {
+    fixtureUserId = existingUser.id;
+  } else {
+    // Create synthetic placeholder user
+    fixtureUserId = '00000000-0000-0000-0000-000000000000';
+    await rp.$executeRawUnsafe(
+      `INSERT INTO "User" (id, name, email, role, "createdAt", "updatedAt")
+       VALUES ($1, 'SyntheticUser', 'synthetic@rag.fixture', 'user', NOW(), NOW())
+       ON CONFLICT (email) DO UPDATE SET id = "User".id RETURNING id`,
+      fixtureUserId,
+    );
+    // Re-fetch
+    const created = await rp.user.findFirstOrThrow({ where: { email: 'synthetic@rag.fixture' }, select: { id: true } });
+    fixtureUserId = created.id;
   }
-  await prisma.knowledgeDocument.deleteMany({ where: { sourceRef: SOURCE_REF } });
-
-  // Clean synthetic reviews (identified by a distinctive pattern in title)
-  await prisma.reviewInsight.deleteMany({ where: { id: { not: '' } } });
-  // We can't easily distinguish synthetic reviews from real ones via Prisma.
-  // Use a simple heuristic: delete reviews with rating in title pattern.
-  // For safety, delete ALL reviews (this is a test fixture tool).
-  await rawPrisma.review.deleteMany({});
-
-  console.log('[fixtures] Old data cleaned.');
 
   // ── Process products ──
-  const products = await rawPrisma.product.findMany({ select: { id: true, name: true, category: true, brand: true, description: true } });
+  const products = await rp.product.findMany({
+    select: { id: true, name: true, category: true, brand: true, description: true },
+  });
   console.log(`[fixtures] Processing ${products.length} products...`);
 
   let specsCount = 0;
@@ -322,19 +334,19 @@ export async function generateRagFixtures(): Promise<{
 
   for (let i = 0; i < products.length; i++) {
     const p = products[i];
-    const tpl = SPEC_MAP[p.category] ?? SHIRT_SPECS;
-
     try {
       // 1. ProductSpec
-      const specs = buildSpecJson(p.category, p);
-      await rawPrisma.productSpec.upsert({
-        where: { productId: p.id },
-        create: { productId: p.id, specs },
-        update: { specs },
-      });
+      const specs = buildSpecJson(p.category);
+      await rp.$executeRawUnsafe(
+        `INSERT INTO "ProductSpec" (id, "productId", specs, "createdAt", "updatedAt")
+         VALUES (gen_random_uuid(), $1, $2::json, NOW(), NOW())
+         ON CONFLICT ("productId") DO UPDATE SET specs = $2::json, "updatedAt" = NOW()`,
+        p.id,
+        JSON.stringify(specs),
+      );
       specsCount++;
 
-      // 2. KnowledgeDocument: product_detail (via indexDocument for chunk+embedding)
+      // 2. product_detail via indexDocument (chunk + embedding + tsvector)
       const detailContent = buildProductDetailContent(p, specs);
       await indexDocument({
         productId: p.id,
@@ -345,31 +357,31 @@ export async function generateRagFixtures(): Promise<{
       });
       productDocsCount++;
 
-      // 3. Reviews: vary count to test both paths (some ≤4, some ≥6)
+      // 3. Reviews: vary count to test both paths
       const reviewCount = i < 2
         ? randBetween(3, 4)   // ≤ threshold → direct path
         : randBetween(6, 12); // > threshold → aggregate path
-      const reviewTexts = generateReviews(p, reviewCount);
+      const reviewTexts = generateReviews(reviewCount);
 
       for (let ri = 0; ri < reviewTexts.length; ri++) {
-        await rawPrisma.review.create({
-          data: {
-            userId: '', // placeholder, will be set when real users exist
-            productId: p.id,
-            rating: randBetween(3, 5),
-            title: `合成评测 #${ri + 1}`,
-            description: reviewTexts[ri],
-            isVerifiedPurchase: true,
-          },
-        });
+        await rp.$executeRawUnsafe(
+          `INSERT INTO "Review" (id, "userId", "productId", rating, title, description, "isVerifiedPurchase", "createdAt")
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, true, NOW())`,
+          fixtureUserId,
+          p.id,
+          randBetween(3, 5),
+          `合成评测 #${ri + 1}`,
+          reviewTexts[ri],
+        );
         reviewsCount++;
       }
     } catch (err: any) {
       errors.push(`Product ${p.id}: ${err.message}`);
+      console.error(`[fixtures] Product ${p.id} error:`, err);
     }
   }
 
-  // ── Policy FAQ documents (via indexDocument for chunking + embedding) ──
+  // ── Policy FAQ documents ──
   console.log('[fixtures] Creating policy FAQ documents...');
   let policyDocsCount = 0;
 
@@ -385,16 +397,18 @@ export async function generateRagFixtures(): Promise<{
       policyDocsCount++;
     } catch (err: any) {
       errors.push(`FAQ ${faq.title}: ${err.message}`);
+      console.error(`[fixtures] FAQ error:`, err);
     }
   }
 
-  // ── Review ingestion for each product ──
-  console.log('[fixtures] Running ingestProductReviews for each product...');
+  // ── Review ingestion ──
+  console.log('[fixtures] Running ingestProductReviews...');
   for (const p of products) {
     try {
       await ingestProductReviews(p.id);
     } catch (err: any) {
       errors.push(`Ingest ${p.id}: ${err.message}`);
+      console.error(`[fixtures] Ingest ${p.id} error:`, err);
     }
   }
 
@@ -407,40 +421,6 @@ export async function generateRagFixtures(): Promise<{
     errors,
   };
 
-  console.log('[fixtures] Done:', result);
+  console.log('[fixtures] Done:', JSON.stringify(result));
   return result;
-}
-
-function buildProductDetailContent(
-  product: { name: string; brand: string; category: string; description: string },
-  specs: Record<string, string>,
-): string {
-  const sections = [
-    `${product.name}`,
-    `品牌：${product.brand}`,
-    `类目：${product.category}`,
-    ``,
-    `商品描述：${product.description}`,
-    ``,
-    `规格参数：`,
-    `- 材质：${specs.material}`,
-    `- 版型：${specs.fit}`,
-    `- 领型：${specs.collar}`,
-    `- 袖长：${specs.sleeve_length}`,
-    `- 厚度：${specs.thickness}`,
-    `- 弹性：${specs.stretch}`,
-    `- 透气性：${specs.breathability}`,
-    `- 适用场景：${specs.occasion}`,
-    `- 适用季节：${specs.season}`,
-    ``,
-    `亮点：${specs.highlights}`,
-    ``,
-    `注意事项：${specs.limitations}`,
-    ``,
-    `洗护建议：${specs.care_instructions}`,
-    ``,
-    `尺码建议：${specs.size_advice}`,
-  ];
-
-  return sections.join('\n');
 }
