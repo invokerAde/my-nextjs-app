@@ -13,6 +13,11 @@ const nextConfig: NextConfig = {
         hostname: '**.placeholder.com',
         port: '',
       },
+      {
+        protocol: 'https',
+        hostname: 'picsum.photos',
+        port: '',
+      },
     ],
   },
 };

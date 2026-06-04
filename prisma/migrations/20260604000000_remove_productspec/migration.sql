@@ -1,7 +1,7 @@
 -- Step 1: Merge ProductSpec.specs into KnowledgeDocument.metadata for product_detail docs
 -- This copies spec attributes into the document metadata JSON
 UPDATE "KnowledgeDocument" kd
-SET metadata = kd.metadata || jsonb_build_object(
+SET metadata = kd.metadata::jsonb || jsonb_build_object(
   'specs', ps.specs::jsonb,
   'mergedFromSpecs', true
 )
