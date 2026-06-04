@@ -6,6 +6,7 @@
  */
 
 import { NextRequest } from 'next/server';
+import { auth } from '@/auth';
 
 // We import the route handler dynamically since it depends on Next.js + auth
 // For type-level and structural tests we test the exported types directly.
@@ -150,5 +151,46 @@ describe('Admin Text2SQL route handler', () => {
     const res = await POST(req);
     // Without admin session, returns 403 before reaching body validation
     expect(res.status).toBe(403);
+  });
+
+  it('POST returns 400 for invalid JSON body when admin', async () => {
+    // Override auth mock to return admin session for this test
+    (auth as jest.Mock).mockResolvedValueOnce({
+      user: { role: 'admin', id: 'test', name: 'Admin' },
+    });
+
+    const { POST } = await import('@/app/api/admin/ai-analytics/text2sql/route');
+
+    const req = new NextRequest('http://localhost/api/admin/ai-analytics/text2sql', {
+      method: 'POST',
+      body: 'not-valid-json',
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+
+    const body = await res.json();
+    expect(body.error).toBe('Bad Request');
+    expect(body.detail).toBe('Invalid JSON body');
+  });
+
+  it('POST returns 400 for missing question when admin', async () => {
+    (auth as jest.Mock).mockResolvedValueOnce({
+      user: { role: 'admin', id: 'test', name: 'Admin' },
+    });
+
+    const { POST } = await import('@/app/api/admin/ai-analytics/text2sql/route');
+
+    const req = new NextRequest('http://localhost/api/admin/ai-analytics/text2sql', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+
+    const body = await res.json();
+    expect(body.error).toBe('Bad Request');
+    expect(body.detail).toBe('Missing required field: question (string)');
   });
 });
