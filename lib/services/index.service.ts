@@ -32,6 +32,7 @@ export interface ProductMetadata {
   numReviews: number;
   stock: number;
   isFeatured: boolean;
+  images: string[];
   // Hard attributes extracted from specs/text
   material?: string;
   fit?: string;
@@ -233,6 +234,7 @@ export async function indexProductDetail(
     numReviews: product.numReviews,
     stock: product.stock,
     isFeatured: product.isFeatured,
+    images: product.images,
     ...hardAttrs,
   };
   if (existingSpecs) {

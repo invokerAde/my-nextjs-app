@@ -1,18 +1,18 @@
 import { prisma } from '@/lib/rag/db';
-import { classifyIntent, IntentResult, IntentType } from '@/lib/services/intent.service';
+import { classifyIntent, IntentType } from '@/lib/services/intent.service';
 import { reciprocalRankFusion, RetrievalHit } from '@/lib/services/rrf.service';
 import { expandQuery } from '@/lib/rag/synonyms';
 import { isEmbeddingConfigured } from '@/lib/services/embedding.service';
-import {
-  MetadataFilter,
-  parseQueryFilters,
-  buildMetadataConditions,
-} from '@/lib/services/metadata-filter.service';
+import { textToMetadataFilter } from '@/lib/services/text-to-metadata-filter.service';
+import { translateAst } from '@/lib/services/filter-translator.service';
+import { deriveFallbackAst } from '@/lib/rag/filter-ast';
+import type { FilterAst } from '@/lib/rag/filter-ast';
 
 export interface RetrievalResult {
   hits: RetrievalHit[];
   usedSources: ('fts' | 'vector' | 'metadata')[];
   confidence: 'high' | 'medium' | 'low';
+  warnings: string[];
 }
 
 const TOP_K = 20;
@@ -25,29 +25,83 @@ export async function retrieve(
   context?: { productId?: string },
 ): Promise<RetrievalResult> {
   const intent = classifyIntent(query);
-  const expandedQuery = expandQuery(query);
+
+  // ── 1. LLM parse → AST + semanticQuery ──
+  const parseResult = await textToMetadataFilter(query);
+  const { semanticQuery, filterAst, warnings, usedTotalFallback } = parseResult;
+  const expandedQuery = expandQuery(semanticQuery);
 
   const hasStructured = intent.intents.some(i => STRUCTURED_INTENTS.includes(i));
   const hasSemantic = intent.intents.some(i => SEMANTIC_INTENTS.includes(i));
   const isHybrid = intent.intents.includes('hybrid');
 
-  // 混合场景: 多意图或默认 hybrid → metadata filter + FTS + vector 并行召回
-  if (isHybrid || (hasStructured && hasSemantic) || intent.intents.length >= 3) {
-    return retrieveByAll(query, expandedQuery, context);
+  const useMetadataFilter = isHybrid || (hasStructured && hasSemantic) || intent.intents.length >= 3 || (hasStructured && !hasSemantic);
+
+  if (useMetadataFilter && filterAst && !usedTotalFallback) {
+    // ── Attempt 1: full AST filter ──
+    const result = await executeRetrieval(expandedQuery, context, filterAst);
+    result.warnings = warnings;
+
+    // ── Attempt 2: fallback AST if 0 hits ──
+    if (result.hits.length === 0) {
+      const fallbackAst = deriveFallbackAst(filterAst);
+      if (fallbackAst) {
+        console.warn('[retrieve] Full filter 0 hits, retrying with fallback AST');
+        const fallbackResult = await executeRetrieval(expandedQuery, context, fallbackAst);
+        if (fallbackResult.hits.length > 0) {
+          fallbackResult.warnings = [...warnings, 'Used fallback filter (soft conditions dropped)'];
+          return fallbackResult;
+        }
+        console.warn('[retrieve] Fallback filter also 0 hits, retrying unfiltered');
+      } else {
+        console.warn('[retrieve] Full filter 0 hits, no fallback AST');
+      }
+      const unfiltered = await retrieveByFTSVector(expandedQuery, context);
+      unfiltered.warnings = [...warnings, 'All filters exhausted — unfiltered search'];
+      return unfiltered;
+    }
+    return result;
   }
 
-  // 纯结构化: metadata filter + vector
-  if (hasStructured && !hasSemantic) {
-    return retrieveByMetadataAndVector(query, expandedQuery, context);
-  }
-
-  // 纯语义: FTS + vector
   if (hasSemantic && !hasStructured) {
-    return retrieveByFTSVector(expandedQuery, context);
+    const result = await retrieveByFTSVector(expandedQuery, context);
+    result.warnings = warnings;
+    return result;
   }
 
-  // 兜底
-  return retrieveByAll(query, expandedQuery, context);
+  // Fallback: unfiltered
+  const result = await retrieveByFTSVector(expandedQuery, context);
+  result.warnings = usedTotalFallback
+    ? [...warnings, 'Metadata parser failed — unfiltered search']
+    : warnings;
+  return result;
+}
+
+// ── Core execution ──
+
+async function executeRetrieval(
+  expandedQuery: string,
+  context: { productId?: string } | undefined,
+  filterAst: NonNullable<FilterAst>,
+): Promise<RetrievalResult> {
+  const usedSources: ('fts' | 'vector' | 'metadata')[] = [];
+  const tasks: Promise<RetrievalHit[]>[] = [];
+
+  // FTS: $1 = tsquery, translator starts at $2
+  usedSources.push('fts');
+  tasks.push(ftsSearch(expandedQuery, TOP_K, filterAst));
+
+  // Vector: $1 = vector, translator starts at $2 (+ $3 if productId)
+  if (isEmbeddingConfigured()) {
+    usedSources.push('vector');
+    tasks.push(vectorSearch(expandedQuery, context?.productId, TOP_K, filterAst));
+  }
+
+  usedSources.push('metadata');
+
+  const hitGroups = await Promise.all(tasks);
+  const hits = reciprocalRankFusion(hitGroups);
+  return { hits, usedSources, confidence: computeConfidence(hits), warnings: [] };
 }
 
 // ── Search primitives ──
@@ -55,20 +109,20 @@ export async function retrieve(
 async function ftsSearch(
   query: string,
   limit: number,
-  filter?: MetadataFilter,
+  filterAst?: FilterAst,
 ): Promise<RetrievalHit[]> {
   const tsquery = query.split(/\s+/).filter(Boolean).map(w => `${w}:*`).join(' & ');
   if (!tsquery) return [];
 
   try {
-    let whereClause = `kc.tsvector @@ to_tsquery('simple', $1)`;
     const params: any[] = [tsquery];
+    let filterClause = '';
 
-    if (filter) {
-      const { clauses, params: filterParams } = buildMetadataConditions(filter);
-      if (clauses.length > 0) {
-        whereClause += ` AND ${clauses.join(' AND ')}`;
-        params.push(...filterParams);
+    if (filterAst) {
+      const translation = translateAst(filterAst, 1); // offset=1: $1 is tsquery
+      if (translation.clause !== 'TRUE') {
+        filterClause = ` AND ${translation.clause}`;
+        params.push(...translation.params);
       }
     }
 
@@ -78,7 +132,7 @@ async function ftsSearch(
       `SELECT kc.id, kc.content, kc.metadata,
               ts_rank(kc.tsvector, to_tsquery('simple', $1)) AS rank
        FROM active_knowledge_chunk_view kc
-       WHERE ${whereClause}
+       WHERE kc.tsvector @@ to_tsquery('simple', $1)${filterClause}
        ORDER BY rank DESC LIMIT $${params.length}`,
       ...params,
     );
@@ -96,7 +150,7 @@ async function vectorSearch(
   query: string,
   productId?: string,
   limit: number = TOP_K,
-  filter?: MetadataFilter,
+  filterAst?: FilterAst,
 ): Promise<RetrievalHit[]> {
   if (!isEmbeddingConfigured()) return [];
 
@@ -106,24 +160,26 @@ async function vectorSearch(
     const vectorLiteral = `[${embedding.join(',')}]`;
 
     const params: any[] = [vectorLiteral];
-    let whereClause = '';
+    const extraParts: string[] = [];
+    let paramOffset = 1; // $1 is vector
 
     if (productId) {
-      whereClause += `AND kc."productId" = $${params.length + 1}`;
+      extraParts.push(`kc."productId" = $${paramOffset + 1}`);
       params.push(productId);
+      paramOffset++;
     }
 
-    if (filter) {
-      const { clauses, params: filterParams } = buildMetadataConditions(filter);
-      if (clauses.length > 0) {
-        for (const clause of clauses) {
-          // Replace $1, $2, ... with re-indexed params
-          const reindexed = clause.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + params.length}`);
-          whereClause += `AND ${reindexed} `;
-        }
-        params.push(...filterParams);
+    if (filterAst) {
+      const translation = translateAst(filterAst, paramOffset);
+      if (translation.clause !== 'TRUE') {
+        extraParts.push(translation.clause);
+        params.push(...translation.params);
       }
     }
+
+    const whereClause = extraParts.length > 0
+      ? `AND ${extraParts.join(' AND ')}`
+      : '';
 
     params.push(limit);
 
@@ -145,98 +201,8 @@ async function vectorSearch(
   }
 }
 
-/**
- * Metadata-only search: parses query filters, filters by chunk metadata,
- * returns hits sorted by rating DESC.
- */
-async function metadataOnlySearch(
-  query: string,
-  limit: number = TOP_K,
-): Promise<{ hits: RetrievalHit[]; filter: MetadataFilter }> {
-  const filter = parseQueryFilters(query);
-  const { clauses, params } = buildMetadataConditions(filter);
+// ── Pure semantic fallback ──
 
-  if (clauses.length === 0) {
-    return { hits: [], filter };
-  }
-
-  try {
-    const rows = await prisma.$queryRawUnsafe(
-      `SELECT kc.id, kc.content, kc.metadata,
-              COALESCE((kc.metadata->>'rating')::numeric, 0) AS rating
-       FROM active_knowledge_chunk_view kc
-       WHERE ${clauses.join(' AND ')}
-         AND kc."docType" = 'product_detail'
-       ORDER BY rating DESC
-       LIMIT ${limit}`,
-      ...params,
-    );
-
-    return {
-      filter,
-      hits: (rows as any[]).map((r, i) => ({
-        id: r.id,
-        score: 1 - i * 0.05,
-        source: 'metadata' as const,
-        content: r.content,
-        metadata: r.metadata,
-      })),
-    };
-  } catch (err) {
-    console.error('[metadataOnlySearch] Query failed:', err);
-    return { hits: [], filter };
-  }
-}
-
-// ── Confidence ──
-
-function computeConfidence(hits: RetrievalHit[]): 'high' | 'medium' | 'low' {
-  if (hits.length === 0) return 'low';
-  if (hits.length >= 3) return 'high';
-  return 'medium';
-}
-
-// ── Route functions ──
-
-/** 结构化查询: metadata filter + vector, metadata filter 无结果时降级为 FTS+vector */
-async function retrieveByMetadataAndVector(
-  query: string,
-  expandedQuery: string,
-  context?: { productId?: string },
-): Promise<RetrievalResult> {
-  const filter = parseQueryFilters(query);
-  const hasFilter = Object.keys(filter).length > 0;
-
-  const usedSources: ('fts' | 'vector' | 'metadata')[] = [];
-  const tasks: Promise<RetrievalHit[]>[] = [];
-
-  // FTS with metadata pre-filter
-  usedSources.push('fts');
-  tasks.push(ftsSearch(expandedQuery, TOP_K, hasFilter ? filter : undefined));
-
-  // Vector with metadata pre-filter
-  if (isEmbeddingConfigured()) {
-    usedSources.push('vector');
-    tasks.push(vectorSearch(expandedQuery, context?.productId, TOP_K, hasFilter ? filter : undefined));
-  }
-
-  if (hasFilter) {
-    usedSources.push('metadata');
-  }
-
-  const hitGroups = await Promise.all(tasks);
-  const hits = reciprocalRankFusion(hitGroups);
-
-  // Fallback: if metadata-filtered results are empty, try without filter
-  if (hits.length === 0 && hasFilter) {
-    console.warn('[retrieve] Metadata filter returned 0 results, falling back to FTS+vector');
-    return retrieveByFTSVector(expandedQuery, context);
-  }
-
-  return { hits, usedSources, confidence: computeConfidence(hits) };
-}
-
-/** 详情/评论/FAQ: FTS + vector + RRF */
 async function retrieveByFTSVector(
   expandedQuery: string,
   context?: { productId?: string },
@@ -251,43 +217,18 @@ async function retrieveByFTSVector(
 
   const hitGroups = await Promise.all(tasks);
   const hits = reciprocalRankFusion(hitGroups);
-  return { hits, usedSources: usedSources as ('fts' | 'vector' | 'metadata')[], confidence: computeConfidence(hits) };
+  return {
+    hits,
+    usedSources: usedSources as ('fts' | 'vector' | 'metadata')[],
+    confidence: computeConfidence(hits),
+    warnings: [],
+  };
 }
 
-/** 混合: metadata 作为前置过滤 + FTS + vector 并行 + RRF */
-async function retrieveByAll(
-  query: string,
-  expandedQuery: string,
-  context?: { productId?: string },
-): Promise<RetrievalResult> {
-  const filter = parseQueryFilters(query);
-  const hasFilter = Object.keys(filter).length > 0;
+// ── Confidence ──
 
-  const usedSources: ('fts' | 'vector' | 'metadata')[] = [];
-  const tasks: Promise<RetrievalHit[]>[] = [];
-
-  // FTS with metadata pre-filter
-  usedSources.push('fts');
-  tasks.push(ftsSearch(expandedQuery, TOP_K, hasFilter ? filter : undefined));
-
-  // Vector with metadata pre-filter
-  if (isEmbeddingConfigured()) {
-    usedSources.push('vector');
-    tasks.push(vectorSearch(expandedQuery, context?.productId, TOP_K, hasFilter ? filter : undefined));
-  }
-
-  if (hasFilter) {
-    usedSources.push('metadata');
-  }
-
-  const hitGroups = await Promise.all(tasks);
-  const hits = reciprocalRankFusion(hitGroups);
-
-  // Fallback: if filtered results empty, retry without filter
-  if (hits.length === 0 && hasFilter) {
-    console.warn('[retrieve] Metadata filter returned 0 results, falling back to FTS+vector');
-    return retrieveByFTSVector(expandedQuery, context);
-  }
-
-  return { hits, usedSources, confidence: computeConfidence(hits) };
+function computeConfidence(hits: RetrievalHit[]): 'high' | 'medium' | 'low' {
+  if (hits.length === 0) return 'low';
+  if (hits.length >= 3) return 'high';
+  return 'medium';
 }

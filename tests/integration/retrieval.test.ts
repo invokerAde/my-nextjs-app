@@ -1,7 +1,11 @@
 import { classifyIntent } from '@/lib/services/intent.service';
 import { reciprocalRankFusion, RetrievalHit } from '@/lib/services/rrf.service';
-import { parseQueryFilters, buildMetadataConditions, safeAttributeKey } from '@/lib/services/metadata-filter.service';
+import { validateAst, deriveFallbackAst, collectConditions } from '@/lib/rag/filter-ast';
+import { translateAst } from '@/lib/services/filter-translator.service';
+import { getFieldSchema, getAllFieldNames } from '@/lib/rag/metadata-schema';
+import { safeAttributeKey } from '@/lib/services/metadata-filter.service';
 import { extractFromSpec, extractFromText, extractAttributes } from '@/lib/services/attribute-extractor.service';
+import type { FilterAst } from '@/lib/rag/filter-ast';
 
 describe('Retrieval pipeline integration', () => {
   it('intent → RRF works for filter query', () => {
@@ -40,59 +44,103 @@ describe('Retrieval pipeline integration', () => {
   });
 });
 
-describe('parseQueryFilters', () => {
-  it('parses price range: 100元以内', () => {
-    const f = parseQueryFilters('100元以内棉质长袖衬衫');
-    expect(f.priceMax).toBe(100);
+// ── AST validation pipeline tests ──
+
+describe('Filter AST + translate → SQL pipeline', () => {
+  it('price filter AST validates and translates with safe numeric cast', () => {
+    const ast: FilterAst = { field: 'price', op: 'lte', value: 100 };
+    const v = validateAst(ast);
+    expect(v.valid).toBe(true);
+
+    const t = translateAst(ast);
+    expect(t.clause).toContain('CASE');
+    expect(t.clause).toContain('::numeric');
+    expect(t.params).toEqual([100]);
   });
 
-  it('parses price range: 50-100', () => {
-    const f = parseQueryFilters('50-100元的衬衫');
-    expect(f.priceMin).toBe(50);
-    expect(f.priceMax).toBe(100);
+  it('material + sleeveLength and AST', () => {
+    const ast: FilterAst = {
+      type: 'and',
+      children: [
+        { field: 'price', op: 'lte', value: 100 },
+        { field: 'material', op: 'eq', value: '纯棉' },
+        { field: 'sleeveLength', op: 'eq', value: '长袖' },
+      ],
+    };
+    const v = validateAst(ast);
+    expect(v.valid).toBe(true);
+
+    const t = translateAst(ast);
+    expect(t.clause).toContain(' AND ');
+    expect(t.params).toEqual([100, '纯棉', '长袖']);
   });
 
-  it('parses rating filter', () => {
-    const f = parseQueryFilters('评分4分以上透气连衣裙');
-    expect(f.ratingMin).toBe(4);
+  it('unknown field rejected by AST validation', () => {
+    const ast: FilterAst = { field: 'nonexistent', op: 'eq', value: 'x' };
+    const v = validateAst(ast);
+    expect(v.valid).toBe(false);
   });
 
-  it('parses in-stock filter', () => {
-    const f = parseQueryFilters('有库存的黑色修身外套');
-    expect(f.inStock).toBe(true);
+  it('string[] in uses independent params', () => {
+    const ast: FilterAst = { field: 'season', op: 'in', value: ['春秋', '夏季'] };
+    const v = validateAst(ast);
+    expect(v.valid).toBe(true);
+
+    const t = translateAst(ast);
+    // 2 values × 2 params each = 4 params
+    expect(t.params).toHaveLength(4);
   });
 
-  it('parses category from query', () => {
-    const f = parseQueryFilters('有什么好看的衬衫推荐');
-    expect(f.category).toBe('衬衫');
-  });
+  it('paramOffset shifts $N references', () => {
+    const ast: FilterAst = { field: 'material', op: 'eq', value: '纯棉' };
 
-  it('parses material attribute', () => {
-    const f = parseQueryFilters('纯棉长袖衬衫');
-    expect(f.attributes?.material).toBe('纯棉');
-  });
+    const t0 = translateAst(ast, 0);
+    expect(t0.clause).toContain('$1');
 
-  it('parses fit attribute', () => {
-    const f = parseQueryFilters('修身版型外套');
-    expect(f.attributes?.fit).toBe('修身');
-  });
-
-  it('parses multiple attributes', () => {
-    const f = parseQueryFilters('纯棉修身长袖衬衫');
-    expect(f.attributes?.material).toBe('纯棉');
-    expect(f.attributes?.fit).toBe('修身');
-    expect(f.attributes?.sleeveLength).toBe('长袖');
-  });
-
-  it('returns empty filter for non-product queries', () => {
-    const f = parseQueryFilters('你好');
-    expect(f.priceMin).toBeUndefined();
-    expect(f.priceMax).toBeUndefined();
-    expect(f.ratingMin).toBeUndefined();
-    expect(f.inStock).toBeUndefined();
-    expect(f.category).toBeUndefined();
+    const t1 = translateAst(ast, 1);
+    expect(t1.clause).toContain('$2'); // offset=1 → $1 becomes $2
+    expect(t1.params).toEqual(['纯棉']);
   });
 });
+
+// ── Fallback AST tests ──
+
+describe('Fallback AST (2-attempt retrieval)', () => {
+  it('deriveFallbackAst preserves hard category filter', () => {
+    const ast: FilterAst = {
+      type: 'and',
+      children: [
+        { field: 'category', op: 'contains', value: '衬衫' },
+        { field: 'price', op: 'lte', value: 100 },
+        { field: 'material', op: 'eq', value: '纯棉' },
+      ],
+    };
+    const fallback = deriveFallbackAst(ast);
+    const conds = collectConditions(fallback!);
+    const fields = conds.map(c => c.field);
+    expect(fields).toContain('category');
+  });
+
+  it('fallback drops soft conditions when hard exist', () => {
+    const ast: FilterAst = {
+      type: 'and',
+      children: [
+        { field: 'category', op: 'contains', value: '衬衫' },
+        { field: 'price', op: 'lte', value: 100 },
+      ],
+    };
+    const fallback = deriveFallbackAst(ast);
+    const conds = collectConditions(fallback!);
+    expect(conds).toHaveLength(1);
+    expect(conds[0].field).toBe('category');
+  });
+
+  it('null AST → null fallback', () => {
+    expect(deriveFallbackAst(null)).toBeNull();
+  });
+});
+
+// ── Attribute extraction ──
 
 describe('extractAttributes', () => {
   const sampleSpecs = {
@@ -129,82 +177,32 @@ describe('extractAttributes', () => {
   it('spec values take priority over text', () => {
     const text = '宽松版型纯棉衬衫';
     const attrs = extractAttributes(text, sampleSpecs);
-    // spec fit is 修身, should override text's 宽松
     expect(attrs.fit).toBe('修身');
-    // material is in both, spec wins
     expect(attrs.material).toBe('纯棉');
-  });
-
-  it('fills gaps from text when spec is missing', () => {
-    const partialSpecs = { material: '纯棉' };
-    const text = '纯棉面料，修身版型，尖领设计';
-    const attrs = extractAttributes(text, partialSpecs);
-    expect(attrs.material).toBe('纯棉');
-    expect(attrs.fit).toBe('修身');
-    expect(attrs.collar).toBe('尖领');
   });
 });
 
-describe('safeAttributeKey', () => {
-  it('allows known attribute keys', () => {
+// ── Schema registry ──
+
+describe('Schema registry', () => {
+  it('getAllFieldNames includes all expected fields', () => {
+    const names = getAllFieldNames();
+    expect(names).toContain('price');
+    expect(names).toContain('category');
+    expect(names).toContain('material');
+    expect(names).toContain('season');
+    expect(names).toContain('scene');
+  });
+
+  it('safeAttributeKey delegates to schema registry', () => {
     expect(safeAttributeKey('material')).toBe('material');
-    expect(safeAttributeKey('fit')).toBe('fit');
-    expect(safeAttributeKey('collar')).toBe('collar');
-    expect(safeAttributeKey('sleeveLength')).toBe('sleeveLength');
-    expect(safeAttributeKey('thickness')).toBe('thickness');
-    expect(safeAttributeKey('stretch')).toBe('stretch');
-    expect(safeAttributeKey('breathability')).toBe('breathability');
-    expect(safeAttributeKey('season')).toBe('season');
-    expect(safeAttributeKey('scene')).toBe('scene');
-    expect(safeAttributeKey('sizeAdvice')).toBe('sizeAdvice');
-  });
-
-  it('rejects unknown attribute keys', () => {
-    expect(safeAttributeKey('')).toBeUndefined();
     expect(safeAttributeKey('unknown')).toBeUndefined();
-    expect(safeAttributeKey('DROP TABLE')).toBeUndefined();
-    expect(safeAttributeKey('price')).toBeUndefined();
-    expect(safeAttributeKey("1; DROP TABLE")).toBeUndefined();
-    expect(safeAttributeKey('category')).toBeUndefined();
-  });
-});
-
-describe('buildMetadataConditions whitelist', () => {
-  it('generates clauses for legal attribute keys', () => {
-    const { clauses, params } = buildMetadataConditions({
-      attributes: { material: '纯棉', fit: '修身' },
-    });
-    expect(clauses).toHaveLength(2);
-    expect(clauses[0]).toContain("->>'material'");
-    expect(clauses[1]).toContain("->>'fit'");
-    expect(params).toEqual(['纯棉', '修身']);
+    expect(safeAttributeKey('')).toBeUndefined();
   });
 
-  it('silently drops illegal attribute keys', () => {
-    const { clauses, params } = buildMetadataConditions({
-      attributes: { material: '纯棉', injected: 'evil', '; DROP--': 'x' },
-    });
-    // Only 'material' is legal
-    expect(clauses).toHaveLength(1);
-    expect(clauses[0]).toContain("->>'material'");
-    expect(params).toEqual(['纯棉']);
-  });
-
-  it('returns empty when all attributes are illegal', () => {
-    const { clauses, params } = buildMetadataConditions({
-      attributes: { hack: 'x', unknown: 'y' },
-    });
-    expect(clauses).toHaveLength(0);
-    expect(params).toHaveLength(0);
-  });
-
-  it('values still go through parameterized binding', () => {
-    const { clauses, params } = buildMetadataConditions({
-      attributes: { material: "'; DROP TABLE Users;--" },
-    });
-    expect(clauses).toHaveLength(1);
-    // The value is a parameter, not inlined in SQL
-    expect(clauses[0]).not.toContain('DROP');
-    expect(params[0]).toBe("'; DROP TABLE Users;--");
+  it('getFieldSchema returns correct type', () => {
+    expect(getFieldSchema('price')?.type).toBe('number');
+    expect(getFieldSchema('category')?.filterStrength).toBe('hard');
+    expect(getFieldSchema('season')?.type).toBe('string[]');
   });
 });

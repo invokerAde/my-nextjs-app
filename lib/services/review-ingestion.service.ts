@@ -26,6 +26,12 @@ export async function ingestProductReviews(productId: string): Promise<Ingestion
 }
 
 async function ingestDirectReviews(productId: string): Promise<IngestionResult> {
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+    select: { name: true, brand: true, category: true, slug: true, images: true },
+  });
+  const productName = product?.name || productId;
+
   const reviews = await prisma.review.findMany({
     where: { productId },
     select: { id: true, description: true, title: true, rating: true },
@@ -56,14 +62,25 @@ async function ingestDirectReviews(productId: string): Promise<IngestionResult> 
   await indexDocument({
     productId,
     docType: 'review_direct',
-    title: `用户评论直入 - ${productId}`,
+    title: `用户评论直入 - ${productName}`,
     content,
+    baseChunkMetadata: product ? {
+      productId, name: product.name, brand: product.brand,
+      category: product.category, slug: product.slug,
+      images: product.images,
+    } : { productId },
   });
 
   return { path: 'direct', message: `Ingested ${cleanedTexts.length} reviews as direct chunks` };
 }
 
 async function ingestAggregatedReviews(productId: string): Promise<IngestionResult> {
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+    select: { name: true, brand: true, category: true, slug: true, images: true },
+  });
+  const productName = product?.name || productId;
+
   const reviews = await prisma.review.findMany({
     where: { productId },
     select: { description: true, title: true, rating: true },
@@ -81,7 +98,7 @@ async function ingestAggregatedReviews(productId: string): Promise<IngestionResu
     return { path: 'aggregate', message: 'No signal after cleaning' };
   }
 
-  const aggregatedContent = simpleAggregate(cleanedTexts, productId);
+  const aggregatedContent = simpleAggregate(cleanedTexts, productName);
 
   const oldInsight = await prisma.reviewInsight.findFirst({
     where: { productId },
@@ -109,8 +126,13 @@ async function ingestAggregatedReviews(productId: string): Promise<IngestionResu
   await indexDocument({
     productId,
     docType: 'review_insight',
-    title: `评论聚合洞察 v${version} - ${productId}`,
+    title: `评论聚合洞察 v${version} - ${productName}`,
     content: aggregatedContent,
+    baseChunkMetadata: product ? {
+      productId, name: product.name, brand: product.brand,
+      category: product.category, slug: product.slug,
+      images: product.images,
+    } : { productId },
   });
 
   // Keep only latest 2 insight versions
@@ -126,7 +148,7 @@ async function ingestAggregatedReviews(productId: string): Promise<IngestionResu
   return { path: 'aggregate', message: `Aggregated ${cleanedTexts.length} reviews, v${version}` };
 }
 
-function simpleAggregate(cleanedTexts: string[], productId: string): string {
+function simpleAggregate(cleanedTexts: string[], productName: string): string {
   const ratingPattern = /\[评分(\d)\]/;
   const ratings = cleanedTexts
     .map(t => { const m = t.match(ratingPattern); return m ? parseInt(m[1]) : null; })
@@ -137,7 +159,7 @@ function simpleAggregate(cleanedTexts: string[], productId: string): string {
     : 'N/A';
 
   return [
-    `商品 ${productId} 用户评论聚合 (${cleanedTexts.length} 条有效评论)`,
+    `商品 ${productName} 用户评论聚合 (${cleanedTexts.length} 条有效评论)`,
     `平均评分: ${avgRating}/5`,
     '',
     '用户反馈摘要:',

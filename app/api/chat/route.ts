@@ -1,6 +1,7 @@
 import { streamText, convertToModelMessages } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { retrieve } from '@/lib/services/retrieval.service';
+import { extractProductImages } from '@/lib/rag/product-image';
 import { ANSWER_SYSTEM_PROMPT, CONSERVATIVE_ANSWER } from '@/lib/rag/templates/prompts';
 
 const llm = createOpenAICompatible({
@@ -21,17 +22,32 @@ export async function POST(req: Request) {
 
   // 前置检索：先查知识库，将结果注入上下文
   let retrievalContext = '';
+  let productImageGroups: ReturnType<typeof extractProductImages> = [];
   try {
     const retrievalResult = await retrieve(query, { productId });
     const hasHits = retrievalResult.hits.length > 0;
 
+    // Extract product images from metadata (before LLM, purely from retrieval)
+    productImageGroups = extractProductImages(retrievalResult.hits);
+
     if (retrievalResult.confidence !== 'low' && hasHits) {
       const parts: string[] = ['\n\n--- 知识库检索结果 ---'];
 
-      // 统一商品检索结果（FTS/Vector/Metadata）
       parts.push('\n[商品检索结果]');
       for (const hit of retrievalResult.hits.slice(0, 10)) {
-        parts.push(`[来源: ${retrievalResult.usedSources.join('+')}] ${hit.content}`);
+        const meta = (hit.metadata || {}) as Record<string, unknown>;
+        const fields: string[] = [];
+        if (meta.name) fields.push(`商品: ${meta.name}`);
+        if (meta.brand) fields.push(`品牌: ${meta.brand}`);
+        if (meta.category) fields.push(`类目: ${meta.category}`);
+        if (meta.price != null) fields.push(`价格: ¥${meta.price}`);
+        if (meta.rating != null) fields.push(`评分: ${meta.rating}/5`);
+        if (meta.numReviews != null) fields.push(`${meta.numReviews}条评价`);
+        if (meta.stock != null) fields.push(`库存: ${meta.stock}件`);
+        if (meta.material) fields.push(`材质: ${meta.material}`);
+        if (meta.fit) fields.push(`版型: ${meta.fit}`);
+        const metaLine = fields.length > 0 ? ` | ${fields.join(' | ')}` : '';
+        parts.push(`[来源: ${retrievalResult.usedSources.join('+')}]${metaLine} ${hit.content?.substring(0, 300)}`);
       }
 
       parts.push(`可信度: ${retrievalResult.confidence}`);
@@ -53,5 +69,42 @@ export async function POST(req: Request) {
     messages: modelMessages,
   });
 
-  return result.toUIMessageStreamResponse();
+  // If no product images, return plain stream
+  if (productImageGroups.length === 0) {
+    return result.toUIMessageStreamResponse();
+  }
+
+  // Inject product image data part as the first chunk of the stream
+  const response = result.toUIMessageStreamResponse();
+  const originalBody = response.body;
+  if (!originalBody) return response;
+
+  const encoder = new TextEncoder();
+  const dataJson = JSON.stringify({
+    type: 'data-product-images',
+    productImageGroups,
+  });
+  const dataChunk = encoder.encode(`0:${dataJson}\n`);
+
+  const combined = new ReadableStream({
+    async start(controller) {
+      controller.enqueue(dataChunk);
+      const reader = originalBody.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(value);
+        }
+      } finally {
+        reader.releaseLock();
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(combined, {
+    headers: response.headers,
+    status: response.status,
+  });
 }

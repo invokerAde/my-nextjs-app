@@ -322,7 +322,7 @@ export async function generateRagFixtures(): Promise<{
 
   // ── Process products ──
   const products = await rp.product.findMany({
-    select: { id: true, name: true, slug: true, category: true, brand: true, description: true, price: true, rating: true, numReviews: true, stock: true, isFeatured: true },
+    select: { id: true, name: true, slug: true, category: true, brand: true, description: true, price: true, rating: true, numReviews: true, stock: true, isFeatured: true, images: true },
   });
   console.log(`[fixtures] Processing ${products.length} products...`);
 
@@ -355,7 +355,9 @@ export async function generateRagFixtures(): Promise<{
         numReviews: p.numReviews,
         stock: p.stock,
         isFeatured: p.isFeatured,
+        images: p.images,
         ...hardAttrs,
+        specs,  // preserve raw specs for rebuild safety
       };
 
       // 4. Index as KnowledgeDocument + chunks with metadata
