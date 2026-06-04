@@ -10,6 +10,10 @@ const links = [
     href: '/admin/overview',
   },
   {
+    title: 'AI Analytics',
+    href: '/admin/ai-analytics',
+  },
+  {
     title: 'Products',
     href: '/admin/products',
   },
