@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { runText2SQL } from '@/lib/services/admin-text2sql/agent';
 
-export const maxDuration = 60;
+// No maxDuration — let the pipeline run as long as needed
 
 export async function POST(req: Request) {
   // ── Auth: admin only ──

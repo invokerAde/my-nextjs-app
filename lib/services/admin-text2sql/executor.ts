@@ -2,7 +2,7 @@
  * SQL Executor — readonly connection with database-level statement_timeout.
  */
 
-const EXEC_TIMEOUT_MS = Number(process.env.TEXT2SQL_EXEC_TIMEOUT_MS) || 5000;
+const EXEC_TIMEOUT_MS = Number(process.env.TEXT2SQL_EXEC_TIMEOUT_MS) || 60000;
 
 let readonlyPrisma: any = null;
 
@@ -39,13 +39,7 @@ export async function executeSQL(
   // Set session to read-only — failure is fatal here
   await client.$executeRawUnsafe('SET default_transaction_read_only = on');
 
-  // JS-level timeout as extra safety net
-  const result = await Promise.race([
-    client.$queryRawUnsafe(sql) as Promise<Record<string, unknown>[]>,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('SQL execution timeout')), EXEC_TIMEOUT_MS),
-    ),
-  ]);
+  const result = await client.$queryRawUnsafe(sql) as Record<string, unknown>[];
 
   return {
     columns: result.length > 0 ? Object.keys(result[0]) : [],

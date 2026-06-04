@@ -15,7 +15,7 @@ import { executeSQL } from '@/lib/services/text2sql/execute';
 // Re-export for backward compatibility
 export { validateSQL, addRowLimit, executeSQL };
 
-const TIMEOUT_MS = Number(process.env.TEXT2SQL_TIMEOUT_MS) || 5000;
+const TIMEOUT_MS = Number(process.env.TEXT2SQL_TIMEOUT_MS) || 120000;
 const MAX_ROWS = Number(process.env.TEXT2SQL_MAX_ROWS) || 50;
 
 const ALLOWED_TABLES = ['product_search_view'];
@@ -79,23 +79,17 @@ function getClient(): OpenAI {
 }
 
 export async function textToSQL(query: string): Promise<Text2SQLResult> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
   try {
-    const completion = await getClient().chat.completions.create(
-      {
-        model: process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          ...FEW_SHOT_EXAMPLES,
-          { role: 'user', content: `Query: ${query}\nSQL:` },
-        ],
-        temperature: 0,
-        max_tokens: 300,
-      },
-      { signal: controller.signal },
-    );
+    const completion = await getClient().chat.completions.create({
+      model: process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        ...FEW_SHOT_EXAMPLES,
+        { role: 'user', content: `Query: ${query}\nSQL:` },
+      ],
+      temperature: 0,
+      max_tokens: 300,
+    });
 
     const sql = completion.choices[0]?.message?.content?.trim() || '';
 
@@ -105,10 +99,7 @@ export async function textToSQL(query: string): Promise<Text2SQLResult> {
 
     return { success: true, sql: addRowLimit(sql) };
   } catch (err: any) {
-    if (err.name === 'AbortError') return { success: false, error: 'Text2SQL timeout' };
     return { success: false, error: err.message || 'Text2SQL failed' };
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 

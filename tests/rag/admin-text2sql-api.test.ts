@@ -118,10 +118,9 @@ describe('Admin Text2SQL route handler', () => {
     jest.restoreAllMocks();
   });
 
-  it('exports POST and maxDuration', async () => {
+  it('exports POST handler', async () => {
     const mod = await import('@/app/api/admin/ai-analytics/text2sql/route');
     expect(typeof mod.POST).toBe('function');
-    expect(mod.maxDuration).toBe(30);
   });
 
   it('POST returns 403 for request without admin session', async () => {
