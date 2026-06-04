@@ -20,7 +20,7 @@ function extractProductImageGroups(message: any): ProductImageGroup[] {
     (p: any) => p.type === 'data-product-images',
   ) || [];
   if (dataParts.length === 0) return [];
-  return dataParts[0].productImageGroups || [];
+  return dataParts[0].data?.productImageGroups || [];
 }
 
 // ── Safe URL check ──

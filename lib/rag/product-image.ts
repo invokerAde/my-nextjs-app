@@ -42,8 +42,7 @@ export function extractProductImages(
     const safeImages = images
       .filter(src => typeof src === 'string' && (
         src.startsWith('/images/') ||
-        src.startsWith('https://utfs.io/') ||
-        src.startsWith('https://')
+        src.startsWith('https://utfs.io/')
       ))
       .slice(0, maxImagesPerGroup)
       .map(src => ({ src, alt: name }));

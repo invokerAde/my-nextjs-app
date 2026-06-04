@@ -1,4 +1,4 @@
-import { streamText, convertToModelMessages } from 'ai';
+import { streamText, convertToModelMessages, createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { retrieve } from '@/lib/services/retrieval.service';
 import { extractProductImages } from '@/lib/rag/product-image';
@@ -27,7 +27,6 @@ export async function POST(req: Request) {
     const retrievalResult = await retrieve(query, { productId });
     const hasHits = retrievalResult.hits.length > 0;
 
-    // Extract product images from metadata (before LLM, purely from retrieval)
     productImageGroups = extractProductImages(retrievalResult.hits);
 
     if (retrievalResult.confidence !== 'low' && hasHits) {
@@ -69,42 +68,22 @@ export async function POST(req: Request) {
     messages: modelMessages,
   });
 
-  // If no product images, return plain stream
-  if (productImageGroups.length === 0) {
-    return result.toUIMessageStreamResponse();
-  }
+  // Combine text stream + product image data parts using AI SDK v6 stream API
+  const textStream = result.toUIMessageStream();
 
-  // Inject product image data part as the first chunk of the stream
-  const response = result.toUIMessageStreamResponse();
-  const originalBody = response.body;
-  if (!originalBody) return response;
-
-  const encoder = new TextEncoder();
-  const dataJson = JSON.stringify({
-    type: 'data-product-images',
-    productImageGroups,
-  });
-  const dataChunk = encoder.encode(`0:${dataJson}\n`);
-
-  const combined = new ReadableStream({
-    async start(controller) {
-      controller.enqueue(dataChunk);
-      const reader = originalBody.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          controller.enqueue(value);
-        }
-      } finally {
-        reader.releaseLock();
-        controller.close();
+  const combinedStream = createUIMessageStream({
+    execute: async ({ writer }) => {
+      // Write product image data part first (before text)
+      if (productImageGroups.length > 0) {
+        writer.write({
+          type: 'data-product-images',
+          data: { productImageGroups },
+        } as any);
       }
+      // Merge text stream (writer handles SSE framing automatically)
+      writer.merge(textStream);
     },
   });
 
-  return new Response(combined, {
-    headers: response.headers,
-    status: response.status,
-  });
+  return createUIMessageStreamResponse({ stream: combinedStream });
 }
