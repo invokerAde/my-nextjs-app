@@ -23,11 +23,17 @@ export async function POST(req: Request) {
   let retrievalContext = '';
   try {
     const retrievalResult = await retrieve(query, { productId });
-    if (retrievalResult.confidence !== 'low' && retrievalResult.hits.length > 0) {
+    const hasHits = retrievalResult.hits.length > 0;
+
+    if (retrievalResult.confidence !== 'low' && hasHits) {
       const parts: string[] = ['\n\n--- 知识库检索结果 ---'];
-      for (const hit of retrievalResult.hits.slice(0, 5)) {
-        parts.push(`[来源: ${hit.source}] ${hit.content}`);
+
+      // 统一商品检索结果（FTS/Vector/Metadata）
+      parts.push('\n[商品检索结果]');
+      for (const hit of retrievalResult.hits.slice(0, 10)) {
+        parts.push(`[来源: ${retrievalResult.usedSources.join('+')}] ${hit.content}`);
       }
+
       parts.push(`可信度: ${retrievalResult.confidence}`);
       retrievalContext = parts.join('\n');
     }

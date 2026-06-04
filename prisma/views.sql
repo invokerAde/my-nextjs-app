@@ -10,9 +10,13 @@ SELECT
   "numReviews",
   p.stock,
   "isFeatured",
-  COALESCE(ps.specs::text, '{}') AS specs_json
+  COALESCE(
+    (kd.metadata->>'specs')::text,
+    '{}'
+  ) AS specs_json
 FROM "Product" p
-LEFT JOIN "ProductSpec" ps ON ps."productId" = p.id;
+LEFT JOIN "KnowledgeDocument" kd
+  ON kd."productId" = p.id AND kd."docType" = 'product_detail';
 
 CREATE VIEW active_knowledge_chunk_view AS
 SELECT
@@ -25,7 +29,9 @@ SELECT
   kc.metadata,
   kd."productId",
   kd."docType",
-  kd.title
+  kd.title,
+  kd.metadata AS "documentMetadata",
+  kd.version
 FROM "KnowledgeChunk" kc
 JOIN "KnowledgeDocument" kd ON kd.id = kc."documentId"
 WHERE kc."isActive" = true;

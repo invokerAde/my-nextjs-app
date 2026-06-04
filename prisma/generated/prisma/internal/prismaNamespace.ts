@@ -393,7 +393,6 @@ export const ModelName = {
   Order: 'Order',
   OrderItem: 'OrderItem',
   Review: 'Review',
-  ProductSpec: 'ProductSpec',
   KnowledgeDocument: 'KnowledgeDocument',
   KnowledgeChunk: 'KnowledgeChunk',
   ReviewInsight: 'ReviewInsight'
@@ -412,7 +411,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "product" | "user" | "account" | "session" | "verificationToken" | "cart" | "order" | "orderItem" | "review" | "productSpec" | "knowledgeDocument" | "knowledgeChunk" | "reviewInsight"
+    modelProps: "product" | "user" | "account" | "session" | "verificationToken" | "cart" | "order" | "orderItem" | "review" | "knowledgeDocument" | "knowledgeChunk" | "reviewInsight"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -1082,80 +1081,6 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
-    ProductSpec: {
-      payload: Prisma.$ProductSpecPayload<ExtArgs>
-      fields: Prisma.ProductSpecFieldRefs
-      operations: {
-        findUnique: {
-          args: Prisma.ProductSpecFindUniqueArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProductSpecPayload> | null
-        }
-        findUniqueOrThrow: {
-          args: Prisma.ProductSpecFindUniqueOrThrowArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProductSpecPayload>
-        }
-        findFirst: {
-          args: Prisma.ProductSpecFindFirstArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProductSpecPayload> | null
-        }
-        findFirstOrThrow: {
-          args: Prisma.ProductSpecFindFirstOrThrowArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProductSpecPayload>
-        }
-        findMany: {
-          args: Prisma.ProductSpecFindManyArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProductSpecPayload>[]
-        }
-        create: {
-          args: Prisma.ProductSpecCreateArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProductSpecPayload>
-        }
-        createMany: {
-          args: Prisma.ProductSpecCreateManyArgs<ExtArgs>
-          result: BatchPayload
-        }
-        createManyAndReturn: {
-          args: Prisma.ProductSpecCreateManyAndReturnArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProductSpecPayload>[]
-        }
-        delete: {
-          args: Prisma.ProductSpecDeleteArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProductSpecPayload>
-        }
-        update: {
-          args: Prisma.ProductSpecUpdateArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProductSpecPayload>
-        }
-        deleteMany: {
-          args: Prisma.ProductSpecDeleteManyArgs<ExtArgs>
-          result: BatchPayload
-        }
-        updateMany: {
-          args: Prisma.ProductSpecUpdateManyArgs<ExtArgs>
-          result: BatchPayload
-        }
-        updateManyAndReturn: {
-          args: Prisma.ProductSpecUpdateManyAndReturnArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProductSpecPayload>[]
-        }
-        upsert: {
-          args: Prisma.ProductSpecUpsertArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProductSpecPayload>
-        }
-        aggregate: {
-          args: Prisma.ProductSpecAggregateArgs<ExtArgs>
-          result: runtime.Types.Utils.Optional<Prisma.AggregateProductSpec>
-        }
-        groupBy: {
-          args: Prisma.ProductSpecGroupByArgs<ExtArgs>
-          result: runtime.Types.Utils.Optional<Prisma.ProductSpecGroupByOutputType>[]
-        }
-        count: {
-          args: Prisma.ProductSpecCountArgs<ExtArgs>
-          result: runtime.Types.Utils.Optional<Prisma.ProductSpecCountAggregateOutputType> | number
-        }
-      }
-    }
     KnowledgeDocument: {
       payload: Prisma.$KnowledgeDocumentPayload<ExtArgs>
       fields: Prisma.KnowledgeDocumentFieldRefs
@@ -1555,17 +1480,6 @@ export const ReviewScalarFieldEnum = {
 export type ReviewScalarFieldEnum = (typeof ReviewScalarFieldEnum)[keyof typeof ReviewScalarFieldEnum]
 
 
-export const ProductSpecScalarFieldEnum = {
-  id: 'id',
-  productId: 'productId',
-  specs: 'specs',
-  createdAt: 'createdAt',
-  updatedAt: 'updatedAt'
-} as const
-
-export type ProductSpecScalarFieldEnum = (typeof ProductSpecScalarFieldEnum)[keyof typeof ProductSpecScalarFieldEnum]
-
-
 export const KnowledgeDocumentScalarFieldEnum = {
   id: 'id',
   productId: 'productId',
@@ -1865,7 +1779,6 @@ export type GlobalOmitConfig = {
   order?: Prisma.OrderOmit
   orderItem?: Prisma.OrderItemOmit
   review?: Prisma.ReviewOmit
-  productSpec?: Prisma.ProductSpecOmit
   knowledgeDocument?: Prisma.KnowledgeDocumentOmit
   knowledgeChunk?: Prisma.KnowledgeChunkOmit
   reviewInsight?: Prisma.ReviewInsightOmit

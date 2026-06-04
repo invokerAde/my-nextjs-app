@@ -1,7 +1,9 @@
 import OpenAI from 'openai';
+import { prisma } from '@/lib/rag/db';
 
 const TIMEOUT_MS = Number(process.env.TEXT2SQL_TIMEOUT_MS) || 5000;
 const MAX_ROWS = Number(process.env.TEXT2SQL_MAX_ROWS) || 50;
+const EXEC_TIMEOUT_MS = Number(process.env.TEXT2SQL_EXEC_TIMEOUT_MS) || 3000;
 
 const ALLOWED_TABLES = ['product_search_view'];
 const FORBIDDEN_KEYWORDS = [
@@ -14,6 +16,17 @@ export interface Text2SQLResult {
   rows?: Record<string, unknown>[];
   sql?: string;
   error?: string;
+}
+
+/** 执行已验证的 SELECT SQL，带超时保护 */
+export async function executeSQL(sql: string): Promise<Record<string, unknown>[]> {
+  const result = await Promise.race([
+    prisma.$queryRawUnsafe(sql) as Promise<Record<string, unknown>[]>,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('SQL execution timeout')), EXEC_TIMEOUT_MS),
+    ),
+  ]);
+  return result;
 }
 
 export const SYSTEM_PROMPT = `You are a SQL query generator for an e-commerce product database.
@@ -98,6 +111,19 @@ export async function textToSQL(query: string): Promise<Text2SQLResult> {
     return { success: false, error: err.message || 'Text2SQL failed' };
   } finally {
     clearTimeout(timeoutId);
+  }
+}
+
+/** 生成 SQL 并执行，返回结构化商品数据 */
+export async function textToSQLAndExecute(query: string): Promise<Text2SQLResult> {
+  const result = await textToSQL(query);
+  if (!result.success || !result.sql) return result;
+
+  try {
+    const rows = await executeSQL(result.sql);
+    return { success: true, sql: result.sql, rows };
+  } catch (err: any) {
+    return { success: false, sql: result.sql, error: `SQL execution failed: ${err.message}` };
   }
 }
 

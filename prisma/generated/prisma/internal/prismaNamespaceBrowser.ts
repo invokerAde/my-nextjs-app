@@ -60,7 +60,6 @@ export const ModelName = {
   Order: 'Order',
   OrderItem: 'OrderItem',
   Review: 'Review',
-  ProductSpec: 'ProductSpec',
   KnowledgeDocument: 'KnowledgeDocument',
   KnowledgeChunk: 'KnowledgeChunk',
   ReviewInsight: 'ReviewInsight'
@@ -218,17 +217,6 @@ export const ReviewScalarFieldEnum = {
 } as const
 
 export type ReviewScalarFieldEnum = (typeof ReviewScalarFieldEnum)[keyof typeof ReviewScalarFieldEnum]
-
-
-export const ProductSpecScalarFieldEnum = {
-  id: 'id',
-  productId: 'productId',
-  specs: 'specs',
-  createdAt: 'createdAt',
-  updatedAt: 'updatedAt'
-} as const
-
-export type ProductSpecScalarFieldEnum = (typeof ProductSpecScalarFieldEnum)[keyof typeof ProductSpecScalarFieldEnum]
 
 
 export const KnowledgeDocumentScalarFieldEnum = {

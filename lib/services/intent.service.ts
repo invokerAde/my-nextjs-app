@@ -7,7 +7,7 @@ export type IntentType =
   | 'hybrid';
 
 export interface IntentResult {
-  intent: IntentType;
+  intents: IntentType[];
   entities: {
     productIds?: string[];
     categories?: string[];
@@ -52,23 +52,15 @@ export function classifyIntent(query: string): IntentResult {
   const hasReview = REVIEW_KEYWORDS.some(k => query.includes(k));
   const hasFAQ = FAQ_KEYWORDS.some(k => query.includes(k));
 
-  let intent: IntentType;
+  const intents: IntentType[] = [];
 
-  if (isTimeSensitive) {
-    intent = 'realtime_price_stock';
-  } else if (hasFilter && hasDetail) {
-    intent = 'hybrid';
-  } else if (hasFilter) {
-    intent = 'product_filter';
-  } else if (hasReview) {
-    intent = 'review_insight';
-  } else if (hasFAQ) {
-    intent = 'policy_faq';
-  } else if (hasDetail) {
-    intent = 'product_detail';
-  } else {
-    intent = 'hybrid';
-  }
+  if (isTimeSensitive) intents.push('realtime_price_stock');
+  if (hasFilter) intents.push('product_filter');
+  if (hasDetail) intents.push('product_detail');
+  if (hasReview) intents.push('review_insight');
+  if (hasFAQ) intents.push('policy_faq');
 
-  return { intent, entities: {}, isTimeSensitive };
+  if (intents.length === 0) intents.push('hybrid');
+
+  return { intents, entities: {}, isTimeSensitive };
 }

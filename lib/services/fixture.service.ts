@@ -5,6 +5,8 @@ import { PrismaClient } from '@/prisma/generated/prisma/client';
 import { PrismaNeon } from '@prisma/adapter-neon';
 import { indexDocument } from '@/lib/services/index.service';
 import { ingestProductReviews } from '@/lib/services/review-ingestion.service';
+import { extractFromSpec } from '@/lib/services/attribute-extractor.service';
+import type { ProductMetadata } from '@/lib/services/index.service';
 
 const SOURCE_REF = 'synthetic-rag-fixtures-v1';
 
@@ -289,8 +291,6 @@ export async function generateRagFixtures(): Promise<{
     await ragPrisma.knowledgeDocument.deleteMany({ where: { sourceRef: SOURCE_REF } });
     await rp.$executeRawUnsafe(`DELETE FROM "ReviewInsight"`);
 
-    // Clean old synthetic product specs
-    await rp.$executeRawUnsafe(`DELETE FROM "ProductSpec"`);
     // Clean old reviews (this is a fixture tool, safe to wipe)
     await rp.$executeRawUnsafe(`DELETE FROM "Review"`);
 
@@ -309,7 +309,6 @@ export async function generateRagFixtures(): Promise<{
   if (existingUser) {
     fixtureUserId = existingUser.id;
   } else {
-    // Create synthetic placeholder user
     fixtureUserId = '00000000-0000-0000-0000-000000000000';
     await rp.$executeRawUnsafe(
       `INSERT INTO "User" (id, name, email, role, "createdAt", "updatedAt")
@@ -317,14 +316,13 @@ export async function generateRagFixtures(): Promise<{
        ON CONFLICT (email) DO UPDATE SET id = "User".id RETURNING id`,
       fixtureUserId,
     );
-    // Re-fetch
     const created = await rp.user.findFirstOrThrow({ where: { email: 'synthetic@rag.fixture' }, select: { id: true } });
     fixtureUserId = created.id;
   }
 
   // ── Process products ──
   const products = await rp.product.findMany({
-    select: { id: true, name: true, category: true, brand: true, description: true },
+    select: { id: true, name: true, slug: true, category: true, brand: true, description: true, price: true, rating: true, numReviews: true, stock: true, isFeatured: true },
   });
   console.log(`[fixtures] Processing ${products.length} products...`);
 
@@ -335,32 +333,47 @@ export async function generateRagFixtures(): Promise<{
   for (let i = 0; i < products.length; i++) {
     const p = products[i];
     try {
-      // 1. ProductSpec
+      // 1. Generate specs (for content + metadata, no ProductSpec table)
       const specs = buildSpecJson(p.category);
-      await rp.$executeRawUnsafe(
-        `INSERT INTO "ProductSpec" (id, "productId", specs, "createdAt", "updatedAt")
-         VALUES (gen_random_uuid(), $1, $2::json, NOW(), NOW())
-         ON CONFLICT ("productId") DO UPDATE SET specs = $2::json, "updatedAt" = NOW()`,
-        p.id,
-        JSON.stringify(specs),
-      );
+      const hardAttrs = extractFromSpec(specs);
       specsCount++;
 
-      // 2. product_detail via indexDocument (chunk + embedding + tsvector)
+      // 2. Build product_detail content with specs embedded
       const detailContent = buildProductDetailContent(p, specs);
+
+      // 3. Build ProductMetadata for chunk filtering
+      const price = Number(p.price);
+      const rating = Number(p.rating);
+      const productMetadata: ProductMetadata = {
+        productId: p.id,
+        name: p.name,
+        slug: p.slug,
+        category: p.category,
+        brand: p.brand,
+        price,
+        rating,
+        numReviews: p.numReviews,
+        stock: p.stock,
+        isFeatured: p.isFeatured,
+        ...hardAttrs,
+      };
+
+      // 4. Index as KnowledgeDocument + chunks with metadata
       await indexDocument({
         productId: p.id,
         docType: 'product_detail',
         title: `${p.name} — 商品详情`,
         content: detailContent,
         sourceRef: SOURCE_REF,
+        metadata: productMetadata as unknown as Record<string, unknown>,
+        baseChunkMetadata: productMetadata as unknown as Record<string, unknown>,
       });
       productDocsCount++;
 
-      // 3. Reviews: vary count to test both paths
+      // 5. Reviews
       const reviewCount = i < 2
-        ? randBetween(3, 4)   // ≤ threshold → direct path
-        : randBetween(6, 12); // > threshold → aggregate path
+        ? randBetween(3, 4)
+        : randBetween(6, 12);
       const reviewTexts = generateReviews(reviewCount);
 
       for (let ri = 0; ri < reviewTexts.length; ri++) {

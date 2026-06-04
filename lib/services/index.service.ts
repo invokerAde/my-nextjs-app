@@ -4,6 +4,7 @@ import { prisma } from '@/lib/rag/db';
 import { chunkDocument } from '@/lib/rag/chunker';
 import { computeDocHash } from '@/lib/rag/hasher';
 import { isEmbeddingConfigured } from '@/lib/services/embedding.service';
+import { extractAttributes, HardAttributes } from '@/lib/services/attribute-extractor.service';
 
 export interface IndexDocumentParams {
   productId: string | null;
@@ -13,6 +14,37 @@ export interface IndexDocumentParams {
   sourceRef?: string;
   /** 覆盖默认的 (productId, docType) 分组去重键，用于 policy FAQ 等多文档同类型场景 */
   groupKey?: string;
+  /** 写入 KnowledgeDocument.metadata 的元数据 */
+  metadata?: Record<string, unknown>;
+  /** 写入每个 KnowledgeChunk.metadata 的基础元数据（会合并到 chunk 自身 metadata） */
+  baseChunkMetadata?: Record<string, unknown>;
+}
+
+/** Product metadata written to KnowledgeDocument.metadata and chunk metadata for filtering */
+export interface ProductMetadata {
+  productId: string;
+  name: string;
+  slug: string;
+  category: string;
+  brand: string;
+  price: number;
+  rating: number;
+  numReviews: number;
+  stock: number;
+  isFeatured: boolean;
+  // Hard attributes extracted from specs/text
+  material?: string;
+  fit?: string;
+  collar?: string;
+  sleeveLength?: string;
+  thickness?: string;
+  stretch?: string;
+  breathability?: string;
+  season?: string;
+  scene?: string;
+  sizeAdvice?: string;
+  /** Raw specs preserved from migration/reindex, ensures rebuilds don't lose data */
+  specs?: Record<string, unknown>;
 }
 
 /**
@@ -56,7 +88,7 @@ export async function indexDocument(params: IndexDocumentParams): Promise<{
   });
   const version = (maxVersion._max.version ?? 0) + 1;
 
-  // 创建 document
+  // 创建 document（带 metadata）
   const doc = await prisma.knowledgeDocument.create({
     data: {
       productId: params.productId as any,
@@ -65,11 +97,15 @@ export async function indexDocument(params: IndexDocumentParams): Promise<{
       title: params.title,
       version,
       sourceRef: params.sourceRef,
+      metadata: (params.metadata || {}) as any,
     },
   });
 
-  // chunk
-  const chunks = chunkDocument(params.content);
+  // chunk（传入 baseChunkMetadata 合并到每个 chunk）
+  const chunkOptions = params.baseChunkMetadata
+    ? { baseMetadata: params.baseChunkMetadata }
+    : undefined;
+  const chunks = chunkDocument(params.content, chunkOptions);
 
   // 批量生成 embedding
   const embeddings = await generateEmbeddingsIfConfigured(chunks.map(c => c.content));
@@ -79,6 +115,11 @@ export async function indexDocument(params: IndexDocumentParams): Promise<{
     const c = chunks[i];
     const embedding = embeddings?.[i];
 
+    // 合并 baseChunkMetadata 到 chunk metadata
+    const chunkMetadata = params.baseChunkMetadata
+      ? { ...params.baseChunkMetadata, ...c.metadata }
+      : c.metadata;
+
     await prisma.$executeRawUnsafe(
       `INSERT INTO "KnowledgeChunk" (id, "documentId", "chunkIndex", content, "tokenCount", metadata, embedding, tsvector, "isActive", version, "createdAt")
        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6::vector, to_tsvector('simple', $7), true, $8, NOW())`,
@@ -86,7 +127,7 @@ export async function indexDocument(params: IndexDocumentParams): Promise<{
       c.index,
       c.content,
       c.tokenCount,
-      JSON.stringify(c.metadata),
+      JSON.stringify(chunkMetadata),
       embedding ? pgVectorLiteral(embedding) : null,
       buildTsvectorInput(c.content),
       version,
@@ -108,23 +149,105 @@ export async function indexDocument(params: IndexDocumentParams): Promise<{
 }
 
 /**
- * 从商品详情生成知识文档并索引
+ * 从商品详情生成知识文档并索引。
+ * 内容 = Product 基础信息 + 描述 + specs 文本。
+ * metadata = Product 字段 + 硬指标抽取结果 + 原始 specs。
+ *
+ * @param productId 商品 ID
+ * @param specs 可选，外部缓存的原始规格数据（先删后建场景下避免读已删除的旧数据）
  */
-export async function indexProductDetail(productId: string): Promise<void> {
+export async function indexProductDetail(
+  productId: string,
+  specs?: Record<string, unknown>,
+): Promise<void> {
   const product = await prisma.product.findUnique({
     where: { id: productId },
   });
 
   if (!product) throw new Error(`Product ${productId} not found`);
 
-  const content = [
+  // Specs 来源优先级: 外部传入 > 已有 KnowledgeDocument.metadata.specs
+  let existingSpecs: Record<string, unknown> | undefined = specs;
+  if (!existingSpecs) {
+    try {
+      const existingDoc = await prisma.knowledgeDocument.findFirst({
+        where: { productId: productId as any, docType: 'product_detail' },
+        orderBy: { version: 'desc' },
+        select: { metadata: true },
+      });
+      if (existingDoc?.metadata && typeof existingDoc.metadata === 'object') {
+        const meta = existingDoc.metadata as Record<string, unknown>;
+        if (meta.specs && typeof meta.specs === 'object') {
+          existingSpecs = meta.specs as Record<string, unknown>;
+        }
+      }
+    } catch {
+      // No existing doc — fine
+    }
+  }
+
+  const price = Number(product.price);
+  const rating = Number(product.rating);
+
+  // Build full product detail text
+  const parts: string[] = [
     `商品名称: ${product.name}`,
     `品牌: ${product.brand}`,
     `类目: ${product.category}`,
-    `描述: ${product.description}`,
-  ].join('\n');
+    '',
+    `商品描述: ${product.description}`,
+  ];
 
-  await indexDocument({ productId, docType: 'product_detail', title: product.name, content });
+  if (existingSpecs) {
+    parts.push('');
+    parts.push('规格参数：');
+    if (existingSpecs.material) parts.push(`- 材质：${existingSpecs.material}`);
+    if (existingSpecs.fit) parts.push(`- 版型：${existingSpecs.fit}`);
+    if (existingSpecs.collar) parts.push(`- 领型：${existingSpecs.collar}`);
+    if (existingSpecs.sleeve_length) parts.push(`- 袖长：${existingSpecs.sleeve_length}`);
+    if (existingSpecs.thickness) parts.push(`- 厚度：${existingSpecs.thickness}`);
+    if (existingSpecs.stretch) parts.push(`- 弹性：${existingSpecs.stretch}`);
+    if (existingSpecs.breathability) parts.push(`- 透气性：${existingSpecs.breathability}`);
+    if (existingSpecs.occasion) parts.push(`- 适用场景：${existingSpecs.occasion}`);
+    if (existingSpecs.season) parts.push(`- 适用季节：${existingSpecs.season}`);
+    if (existingSpecs.highlights) parts.push(`亮点：${existingSpecs.highlights}`);
+    if (existingSpecs.limitations) parts.push(`注意事项：${existingSpecs.limitations}`);
+    if (existingSpecs.care_instructions) parts.push(`洗护建议：${existingSpecs.care_instructions}`);
+    if (existingSpecs.size_advice) parts.push(`尺码建议：${existingSpecs.size_advice}`);
+  }
+
+  const content = parts.join('\n');
+
+  // Extract hard attributes from content + specs
+  const hardAttrs = extractAttributes(content, existingSpecs);
+
+  // Build product metadata for filtering (includes raw specs for rebuild safety)
+  const productMetadata: ProductMetadata = {
+    productId,
+    name: product.name,
+    slug: product.slug,
+    category: product.category,
+    brand: product.brand,
+    price,
+    rating,
+    numReviews: product.numReviews,
+    stock: product.stock,
+    isFeatured: product.isFeatured,
+    ...hardAttrs,
+  };
+  if (existingSpecs) {
+    productMetadata.specs = existingSpecs;
+  }
+
+  // Use ProductMetadata as doc metadata and base chunk metadata
+  await indexDocument({
+    productId,
+    docType: 'product_detail',
+    title: `${product.name} — 商品详情`,
+    content,
+    metadata: productMetadata as unknown as Record<string, unknown>,
+    baseChunkMetadata: productMetadata as unknown as Record<string, unknown>,
+  });
 }
 
 /**
@@ -139,23 +262,17 @@ export async function backfillAllProducts(): Promise<{
 }> {
   const products = await prisma.product.findMany({ select: { id: true } });
 
-  let indexed = 0;
   let skipped = 0;
   const errors: string[] = [];
 
   for (const p of products) {
     try {
-      const result = await indexProductDetail(p.id);
-      if (result !== undefined) {
-        // indexProductDetail doesn't return a result, we call indexDocument indirectly
-        indexed++;
-      }
+      await indexProductDetail(p.id);
     } catch (err: any) {
       errors.push(`${p.id}: ${err.message}`);
     }
   }
 
-  // 更准确计数：重新查询 knowledge_document
   const docCount = await prisma.knowledgeDocument.count({
     where: { docType: 'product_detail' },
   });
@@ -171,6 +288,20 @@ export async function forceReindexProduct(productId: string): Promise<{
   message: string;
 }> {
   try {
+    // 先读取旧 metadata.specs，再清除旧数据，避免 specs 丢失
+    let cachedSpecs: Record<string, unknown> | undefined;
+    const oldDoc = await prisma.knowledgeDocument.findFirst({
+      where: { productId, docType: 'product_detail' },
+      orderBy: { version: 'desc' },
+      select: { metadata: true },
+    });
+    if (oldDoc?.metadata && typeof oldDoc.metadata === 'object') {
+      const meta = oldDoc.metadata as Record<string, unknown>;
+      if (meta.specs && typeof meta.specs === 'object') {
+        cachedSpecs = meta.specs as Record<string, unknown>;
+      }
+    }
+
     // 清除旧数据
     const oldDocs = await prisma.knowledgeDocument.findMany({
       where: { productId },
@@ -181,8 +312,8 @@ export async function forceReindexProduct(productId: string): Promise<{
       await prisma.knowledgeDocument.delete({ where: { id: od.id } });
     }
 
-    // 重建
-    await indexProductDetail(productId);
+    // 重建（传入缓存 specs）
+    await indexProductDetail(productId, cachedSpecs);
     return { success: true, message: `Product ${productId} reindexed` };
   } catch (err: any) {
     return { success: false, message: err.message };

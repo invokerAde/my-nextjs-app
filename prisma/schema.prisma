@@ -30,7 +30,6 @@ model Product {
   createdAt   DateTime    @default(now()) @db.Timestamp(6)
   OrderItem          OrderItem[]
   Review             Review[]
-  ProductSpec        ProductSpec[]
   KnowledgeDocument  KnowledgeDocument[]
   ReviewInsight      ReviewInsight[]
 }
@@ -152,14 +151,6 @@ model Review {
   user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-model ProductSpec {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  productId String   @unique(map: "product_specs_productId_idx") @db.Uuid
-  specs     Json     @db.Json
-  createdAt DateTime @default(now()) @db.Timestamp(6)
-  updatedAt DateTime @updatedAt
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-}
 
 model KnowledgeDocument {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

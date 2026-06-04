@@ -70,7 +70,7 @@ export function RagAdminPanel() {
         <div className="space-y-2 rounded-md border p-3">
           <p className="text-xs font-medium">测试数据生成</p>
           <p className="text-xs text-muted-foreground">
-            为所有商品生成 ProductSpec、富文本详情、评论（8-15条）和 FAQ 政策文档，再自动索引。
+            为所有商品生成规格、富文本详情、评论（8-15条）和 FAQ 政策文档，再自动索引。
           </p>
           <Button
             onClick={handleFixtures}

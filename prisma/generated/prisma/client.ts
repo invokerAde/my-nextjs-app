@@ -87,11 +87,6 @@ export type OrderItem = Prisma.OrderItemModel
  */
 export type Review = Prisma.ReviewModel
 /**
- * Model ProductSpec
- * 
- */
-export type ProductSpec = Prisma.ProductSpecModel
-/**
  * Model KnowledgeDocument
  * 
  */

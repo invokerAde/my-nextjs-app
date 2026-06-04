@@ -1,7 +1,7 @@
 export interface RetrievalHit {
   id: string;
   score: number;
-  source: 'fts' | 'vector' | 'sql';
+  source: 'fts' | 'vector' | 'sql' | 'metadata';
   content?: string;
   metadata?: Record<string, unknown>;
 }
