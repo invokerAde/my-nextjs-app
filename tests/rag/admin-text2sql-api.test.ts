@@ -114,6 +114,10 @@ jest.mock('@/auth', () => ({
 }));
 
 describe('Admin Text2SQL route handler', () => {
+  afterAll(() => {
+    jest.restoreAllMocks();
+  });
+
   it('exports POST and maxDuration', async () => {
     const mod = await import('@/app/api/admin/ai-analytics/text2sql/route');
     expect(typeof mod.POST).toBe('function');
@@ -121,9 +125,6 @@ describe('Admin Text2SQL route handler', () => {
   });
 
   it('POST returns 403 for request without admin session', async () => {
-    // This test verifies the auth guard works at the HTTP layer
-    // We can't easily mock auth() from here, so we test the shape contract
-
     const { POST } = await import('@/app/api/admin/ai-analytics/text2sql/route');
 
     // Create a request without auth cookies
