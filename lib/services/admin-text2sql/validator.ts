@@ -1,172 +1,169 @@
 /**
- * SQL Validator for Admin Text2SQL.
- *
- * Rules:
- * - Only SELECT (or WITH ... SELECT) allowed
- * - No DML/DDL keywords
- * - No multi-statement (; inside SQL)
- * - No comment escapes (--, / * * /)
- * - All FROM/JOIN table references must be in the whitelist
- * - No raw table access (Product, User, Order, Review, ...)
- * - LIMIT is capped to TEXT2SQL_MAX_ROWS; missing LIMIT is appended
+ * SQL Validator for Admin Text2SQL — uses SQL AST parser (node-sql-parser).
  */
 
-import { ANALYTICS_VIEWS, type AnalyticsView } from './knowledge';
+import { Parser } from 'node-sql-parser';
+import { ANALYTICS_VIEWS } from './knowledge';
 
+const parser = new Parser();
 const MAX_ROWS_DEFAULT = 100;
-
-const FORBIDDEN_KEYWORDS = [
-  'INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'CREATE',
-  'TRUNCATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE',
-  'REPLACE', 'MERGE', 'COPY', 'CALL', 'DO',
-];
-
-// Tables/views that must never appear directly in SQL
-const FORBIDDEN_TABLES = [
-  'Product', 'User', 'Order', 'OrderItem', 'Review',
-  'Cart', 'Account', 'Session', 'VerificationToken',
-  'ProductSpec', 'ReviewInsight',
-  'KnowledgeDocument', 'KnowledgeChunk',
-];
 
 export interface ValidationResult {
   valid: boolean;
-  sql: string;           // Normalized SQL (LIMIT-added)
+  sql: string;
   error?: string;
 }
 
-/**
- * Validate a generated SQL string against all rules.
- * Returns normalized SQL with LIMIT applied.
- */
 export function validateAdminSQL(
   sql: string,
   maxRows: number = MAX_ROWS_DEFAULT,
 ): ValidationResult {
   const trimmed = sql.trim();
-
-  // 1. Non-empty
   if (!trimmed || trimmed.length < 6) {
     return { valid: false, sql: trimmed, error: 'SQL is empty or too short' };
   }
 
-  const upper = trimmed.toUpperCase();
-
-  // 2. No forbidden keywords
-  for (const kw of FORBIDDEN_KEYWORDS) {
-    // Match whole words only (not substrings of identifiers)
-    if (new RegExp(`\\b${kw}\\b`, 'i').test(trimmed)) {
-      return { valid: false, sql: trimmed, error: `Forbidden keyword: ${kw}` };
-    }
-  }
-
-  // 3. Must start with SELECT or WITH
-  if (!/^(SELECT|WITH)\b/i.test(trimmed)) {
-    return { valid: false, sql: trimmed, error: 'SQL must start with SELECT or WITH' };
-  }
-
-  // 4. No multi-statement (semicolons inside, excluding trailing)
-  const body = trimmed.replace(/;+$/, '');
-  if (body.includes(';')) {
-    return { valid: false, sql: trimmed, error: 'Multi-statement SQL is not allowed' };
-  }
-
-  // 5. No comment escapes
+  // 1. Reject SQL comments
   if (/--/.test(trimmed) || /\/\*/.test(trimmed)) {
     return { valid: false, sql: trimmed, error: 'SQL comments are not allowed' };
   }
 
-  // 6. Extract table/view references from FROM and JOIN clauses
-  const tableRefs = extractTableReferences(trimmed);
+  // 2. AST parse
+  let ast: any;
+  try {
+    ast = parser.astify(trimmed, { database: 'PostgresQL' });
+  } catch (err: any) {
+    return { valid: false, sql: trimmed, error: `SQL parse error: ${err.message}` };
+  }
 
-  // 7. All referenced tables must be in the whitelist
+  // 3. Multi-statement check
+  if (Array.isArray(ast) && ast.length > 1) {
+    return { valid: false, sql: trimmed, error: 'Multi-statement SQL is not allowed' };
+  }
+  const statement = Array.isArray(ast) ? ast[0] : ast;
+
+  // 4. Type check
+  const DISALLOWED = ['insert', 'update', 'delete', 'drop', 'alter', 'create', 'truncate', 'replace'];
+  if (statement && DISALLOWED.includes(statement.type)) {
+    return { valid: false, sql: trimmed, error: `Forbidden statement type: ${statement.type.toUpperCase()}` };
+  }
+  if (statement && statement.type !== 'select') {
+    return { valid: false, sql: trimmed, error: `Only SELECT allowed, got: ${statement.type}` };
+  }
+
+  // 5. Extract ALL table refs (includes UNION, subqueries, CTE, EXISTS, scalar)
+  const tableRefs = extractAllTableRefs(statement);
+
+  // 6. Whitelist check
   for (const ref of tableRefs) {
-    if (FORBIDDEN_TABLES.some(t => t.toLowerCase() === ref.toLowerCase())) {
+    if (!ANALYTICS_VIEWS.some(v => v.toLowerCase() === ref)) {
       return {
-        valid: false,
-        sql: trimmed,
-        error: `Direct access to "${ref}" is forbidden. Use analytics views only.`,
-      };
-    }
-    if (!ANALYTICS_VIEWS.some(v => v.toLowerCase() === ref.toLowerCase())) {
-      return {
-        valid: false,
-        sql: trimmed,
-        error: `Unknown table/view "${ref}". Only analytics views are allowed: ${ANALYTICS_VIEWS.join(', ')}`,
+        valid: false, sql: trimmed,
+        error: `Table/view "${ref}" is not in the analytics whitelist. Allowed: ${ANALYTICS_VIEWS.join(', ')}`,
       };
     }
   }
 
-  if (tableRefs.length === 0) {
-    return { valid: false, sql: trimmed, error: 'No table references found in SQL' };
-  }
-
-  // 8. LIMIT handling
+  // 7. LIMIT
   return applyLimit(trimmed, maxRows);
 }
 
-/**
- * Extract table/view names from FROM and JOIN clauses.
- * Handles: FROM "Table", FROM schema."Table", FROM Table, JOIN "Table", etc.
- * CTE alias names (defined in WITH clause) are excluded.
- */
-function extractTableReferences(sql: string): string[] {
-  // First, extract CTE alias names from WITH clause
-  const cteNames = new Set<string>();
-  const withPart = sql.match(/WITH\s+(.+?)\s+AS\s*\(/gis);
-  if (withPart) {
-    for (const w of withPart) {
-      const m = w.match(/WITH\s+([\w"]+)\s+AS\s*\(/i);
-      if (m) {
-        cteNames.add(m[1].replace(/"/g, '').toLowerCase());
-      }
-    }
-  }
+// ── Full AST traversal ──
 
-  const refs: string[] = [];
-  // Match FROM/JOIN followed by an identifier (quoted or unquoted)
-  const pattern = /(?:FROM|JOIN)\s+(?:[\w"]+\.)?(?:"([^"]+)"|(\w+))/gi;
-  let match;
-  while ((match = pattern.exec(sql)) !== null) {
-    const name = (match[1] || match[2] || '').toLowerCase();
-    if (name && !/^(SELECT|WITH|ON|WHERE|AND|OR|NOT|IN|AS)$/i.test(name)) {
-      // Skip CTE alias names
-      if (!cteNames.has(name)) {
-        refs.push(name);
-      }
-    }
-  }
-  return [...new Set(refs)];
+function extractAllTableRefs(root: any): string[] {
+  const refs = new Set<string>();
+  const cteNames = new Set<string>();
+  walk(root, cteNames, refs);
+  return [...refs].filter(r => !cteNames.has(r));
 }
 
-/** Ensure LIMIT exists and is capped. */
+function walk(node: any, cteNames: Set<string>, refs: Set<string>): void {
+  if (!node || typeof node !== 'object') return;
+
+  // Collect CTE names from WITH clause
+  if (node.with && Array.isArray(node.with)) {
+    for (const cte of node.with) {
+      const name = typeof cte.name === 'string' ? cte.name : cte.name?.value;
+      if (name) cteNames.add(String(name).toLowerCase());
+      // Walk CTE body
+      if (cte.stmt) walk(cte.stmt, cteNames, refs);
+    }
+  }
+
+  // FROM tables
+  if (node.from && Array.isArray(node.from)) {
+    for (const f of node.from) {
+      if (f.table) refs.add(String(f.table).toLowerCase());
+      if (f.expr && f.expr.type === 'select') walk(f.expr, cteNames, refs);
+    }
+  }
+
+  // UNION chain (_next)
+  if (node._next) walk(node._next, cteNames, refs);
+
+  // WHERE — EXISTS / IN subqueries
+  if (node.where) {
+    const subqueries = findSubqueries(node.where);
+    for (const sq of subqueries) walk(sq, cteNames, refs);
+  }
+
+  // SELECT columns — scalar subqueries
+  if (node.columns && Array.isArray(node.columns)) {
+    for (const col of node.columns) {
+      const subqueries = findSubqueries(col);
+      for (const sq of subqueries) walk(sq, cteNames, refs);
+    }
+  }
+
+  // HAVING subqueries
+  if (node.having) {
+    const subqueries = findSubqueries(node.having);
+    for (const sq of subqueries) walk(sq, cteNames, refs);
+  }
+}
+
+/** Deep-walk any subtree for embedded SELECT AST nodes. */
+function findSubqueries(node: any): any[] {
+  const results: any[] = [];
+  if (!node || typeof node !== 'object') return results;
+
+  // Direct subquery in EXISTS / IN (e.g., args.value[0].ast)
+  if (node.args?.value && Array.isArray(node.args.value)) {
+    for (const v of node.args.value) {
+      if (v.ast && v.ast.type === 'select') results.push(v.ast);
+      results.push(...findSubqueries(v));
+    }
+  }
+
+  // expr subquery
+  if (node.expr) {
+    if (node.expr.ast && node.expr.ast.type === 'select') results.push(node.expr.ast);
+    results.push(...findSubqueries(node.expr));
+  }
+
+  // left/right for binary expressions
+  if (node.left) results.push(...findSubqueries(node.left));
+  if (node.right) results.push(...findSubqueries(node.right));
+
+  return results;
+}
+
+// ── LIMIT ──
+
 function applyLimit(sql: string, maxRows: number): ValidationResult {
   let trimmed = sql.trim().replace(/;+$/, '');
-  const limitMatch = trimmed.match(/\bLIMIT\s+(\d+)\s*$/i);
-
-  if (limitMatch) {
-    const existingLimit = parseInt(limitMatch[1], 10);
-    if (existingLimit > maxRows) {
-      // Cap to maxRows
+  const m = trimmed.match(/\bLIMIT\s+(\d+)\s*$/i);
+  if (m) {
+    if (parseInt(m[1], 10) > maxRows) {
       trimmed = trimmed.replace(/\bLIMIT\s+\d+\s*$/i, `LIMIT ${maxRows}`);
     }
     return { valid: true, sql: trimmed };
   }
-
-  // No LIMIT — append one
   return { valid: true, sql: `${trimmed} LIMIT ${maxRows}` };
 }
 
-/**
- * Lightweight pre-validation that doesn't require SQL parsing.
- * Use before LLM generation to validate user input (not SQL).
- */
-export function validateQuestion(question: string): { valid: boolean; error?: string } {
-  if (!question || question.trim().length < 2) {
-    return { valid: false, error: 'Question is too short' };
-  }
-  if (question.length > 2000) {
-    return { valid: false, error: 'Question is too long (max 2000 chars)' };
-  }
+export function validateQuestion(q: string): { valid: boolean; error?: string } {
+  if (!q || q.trim().length < 2) return { valid: false, error: 'Question too short' };
+  if (q.length > 2000) return { valid: false, error: 'Question too long (max 2000)' };
   return { valid: true };
 }

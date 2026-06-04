@@ -1,4 +1,4 @@
-import { validateSQL } from '@/lib/services/text2sql.service';
+import { validateSQL } from '@/lib/services/text2sql/validate';
 
 describe('Text2SQL validation', () => {
   it('rejects empty SQL', () => {

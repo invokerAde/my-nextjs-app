@@ -48,6 +48,7 @@ SELECT
   r."userId" AS user_id,
   r.rating,
   r.title,
+  r.description,
   r."isVerifiedPurchase" AS is_verified_purchase,
   r."createdAt" AS review_created_at,
   p.name AS product_name,
