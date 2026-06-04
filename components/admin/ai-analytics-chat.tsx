@@ -57,11 +57,6 @@ function formatCellValue(value: unknown): string {
   return String(value);
 }
 
-let msgCounter = 0;
-function nextId(): string {
-  msgCounter++;
-  return `msg-${Date.now()}-${msgCounter}`;
-}
 
 // ── Component ──
 
@@ -70,6 +65,12 @@ export function AiAnalyticsChat() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const counterRef = useRef(0);
+
+  function nextId(): string {
+    counterRef.current++;
+    return `msg-${Date.now()}-${counterRef.current}`;
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -119,13 +120,14 @@ export function AiAnalyticsChat() {
         };
         setMessages((prev) => [...prev, assistantMsg]);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to reach the server';
       const assistantMsg: ChatMessage = {
         id: nextId(),
         role: 'assistant',
         question: q,
         error: 'Network error',
-        errorDetail: err.message || 'Failed to reach the server',
+        errorDetail: message,
       };
       setMessages((prev) => [...prev, assistantMsg]);
     } finally {
