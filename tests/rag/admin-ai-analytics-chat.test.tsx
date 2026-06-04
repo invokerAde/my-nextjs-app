@@ -13,14 +13,21 @@ jest.mock('@/lib/utils', () => ({
 import { AiAnalyticsChat } from '@/components/admin/ai-analytics-chat';
 
 // Mock global fetch
+const originalFetch = global.fetch;
 const mockFetch = jest.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
 
 // jsdom does not implement scrollIntoView
+const originalScrollIntoView = Element.prototype.scrollIntoView;
 Element.prototype.scrollIntoView = jest.fn();
 
 beforeEach(() => {
   mockFetch.mockReset();
+});
+
+afterAll(() => {
+  global.fetch = originalFetch;
+  Element.prototype.scrollIntoView = originalScrollIntoView;
 });
 
 // ── Helper: build a mock success response ──
