@@ -26,13 +26,17 @@ describe('Admin Text2SQL API response shape', () => {
       warnings: string[];
       knowledgeSources: string[];
       visualization?: {
-        schemaVersion: number;
-        type: 'bar' | 'line' | 'pie';
+        schemaVersion: 2;
+        type: 'bar' | 'line';
         title: string;
-        xField?: string;
-        yFields?: string[];
-        categoryField?: string;
-        valueField?: string;
+        xAxis: { field: string; label?: string };
+        series: { field: string; label?: string }[];
+      } | {
+        schemaVersion: 2;
+        type: 'pie';
+        title: string;
+        categoryField: string;
+        valueField: string;
       } | null;
     } = {
       sql: 'SELECT 1',
@@ -51,7 +55,7 @@ describe('Admin Text2SQL API response shape', () => {
     expect(response.visualization).toBeUndefined();
   });
 
-  it('Text2SQLResponse accepts visualization field', () => {
+  it('Text2SQLResponse accepts visualization field (v2 spec)', () => {
     const withVis: {
       sql: string;
       columns: string[];
@@ -61,7 +65,13 @@ describe('Admin Text2SQL API response shape', () => {
       executionMs: number;
       warnings: string[];
       knowledgeSources: string[];
-      visualization?: { schemaVersion: number; type: 'bar'; title: string; xField: string; yFields: string[] } | null;
+      visualization?: {
+        schemaVersion: 2;
+        type: 'bar';
+        title: string;
+        xAxis: { field: string };
+        series: { field: string }[];
+      } | null;
     } = {
       sql: 'SELECT category, SUM(amount) AS total FROM sales GROUP BY category',
       columns: ['category', 'total'],
@@ -75,17 +85,17 @@ describe('Admin Text2SQL API response shape', () => {
       warnings: [],
       knowledgeSources: [],
       visualization: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         type: 'bar',
         title: 'Sales by category',
-        xField: 'category',
-        yFields: ['total'],
+        xAxis: { field: 'category' },
+        series: [{ field: 'total' }],
       },
     };
     expect(withVis.visualization).not.toBeNull();
     expect(withVis.visualization!.type).toBe('bar');
-    expect(withVis.visualization!.xField).toBe('category');
-    expect(withVis.visualization!.yFields).toEqual(['total']);
+    expect(withVis.visualization!.xAxis.field).toBe('category');
+    expect(withVis.visualization!.series[0].field).toBe('total');
   });
 
   it('Text2SQLRequest type accepts question, dryRun, maxRows', () => {

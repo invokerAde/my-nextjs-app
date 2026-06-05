@@ -275,7 +275,7 @@ describe('AiAnalyticsChat', () => {
     expect(input).toHaveValue('No submit');
   });
 
-  it('renders chart when visualization is present', async () => {
+  it('renders chart when visualization is present (v2 spec)', async () => {
     mockSuccess({
       columns: ['category', 'total_sales'],
       rows: [
@@ -284,11 +284,11 @@ describe('AiAnalyticsChat', () => {
       ],
       rowCount: 2,
       visualization: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         type: 'bar',
         title: 'Sales by category',
-        xField: 'category',
-        yFields: ['total_sales'],
+        xAxis: { field: 'category' },
+        series: [{ field: 'total_sales' }],
       },
     });
     render(<AiAnalyticsChat />);

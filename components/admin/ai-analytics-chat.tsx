@@ -320,6 +320,21 @@ const X_LABEL_ROTATE_THRESHOLD = 8;
 
 // ── ResultChart ──
 
+// ── Pie Top-N + Other ──
+
+function buildPieData(rows: Record<string, unknown>[], categoryField: string, valueField: string) {
+  const sorted = [...rows]
+    .map(r => ({ name: String(r[categoryField] ?? '-'), value: Number(r[valueField]) || 0 }))
+    .sort((a, b) => b.value - a.value);
+
+  if (sorted.length <= 10) return sorted;
+
+  const top = sorted.slice(0, 9);
+  const otherValue = sorted.slice(9).reduce((sum, item) => sum + item.value, 0);
+  if (otherValue > 0) top.push({ name: 'Other', value: otherValue });
+  return top;
+}
+
 const ResultChart = React.memo(function ResultChart({
   visualization,
   rows,
@@ -327,15 +342,46 @@ const ResultChart = React.memo(function ResultChart({
   visualization: VisualizationSpec;
   rows: Record<string, unknown>[];
 }) {
-  // Convert only the fields the chart actually uses
-  const numericFields = visualization.type === 'pie'
-    ? [visualization.valueField!]
-    : (visualization.yFields || []);
-  const allUsedFields = new Set([
-    visualization.xField,
-    visualization.categoryField,
-    ...numericFields,
-  ].filter(Boolean) as string[]);
+  if (visualization.type === 'pie') {
+    const chartData = buildPieData(rows, visualization.categoryField, visualization.valueField);
+    return (
+      <div className="w-full">
+        <p className="text-xs font-medium text-muted-foreground mb-2">
+          {visualization.title}
+        </p>
+        <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+          <PieChart>
+            <Pie
+              data={chartData}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              outerRadius={120}
+              label={({ name, percent }) =>
+                `${name} ${((percent ?? 0) * 100).toFixed(0)}%`
+              }
+              labelLine
+            >
+              {chartData.map((_, i) => (
+                <Cell
+                  key={`cell-${i}`}
+                  fill={CHART_COLORS[i % CHART_COLORS.length]}
+                />
+              ))}
+            </Pie>
+            <Tooltip />
+            <Legend />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  // bar or line
+  const { xAxis, series } = visualization;
+  const numericFields = series.map(s => s.field);
+  const allUsedFields = new Set([xAxis.field, ...numericFields]);
 
   const chartData = rows.map(row => {
     const mapped: Record<string, unknown> = {};
@@ -350,14 +396,17 @@ const ResultChart = React.memo(function ResultChart({
 
   const manyBars = chartData.length > X_LABEL_ROTATE_THRESHOLD;
 
-  const renderChart = () => {
-    switch (visualization.type) {
-      case 'bar':
-        return (
+  return (
+    <div className="w-full">
+      <p className="text-xs font-medium text-muted-foreground mb-2">
+        {visualization.title}
+      </p>
+      <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+        {visualization.type === 'bar' ? (
           <BarChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-muted/50" />
             <XAxis
-              dataKey={visualization.xField}
+              dataKey={xAxis.field}
               tick={{ fontSize: 11 }}
               interval={0}
               angle={manyBars ? -30 : 0}
@@ -367,34 +416,31 @@ const ResultChart = React.memo(function ResultChart({
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip />
             {chartData.length <= 12 && <Legend />}
-            {numericFields.map((field, i) => (
+            {series.map((s, i) => (
               <Bar
-                key={field}
-                dataKey={field}
+                key={s.field}
+                dataKey={s.field}
                 fill={CHART_COLORS[i % CHART_COLORS.length]}
                 radius={[4, 4, 0, 0]}
               />
             ))}
           </BarChart>
-        );
-
-      case 'line':
-        return (
+        ) : (
           <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-muted/50" />
             <XAxis
-              dataKey={visualization.xField}
+              dataKey={xAxis.field}
               tick={{ fontSize: 11 }}
               interval="preserveStartEnd"
             />
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip />
             {chartData.length <= 12 && <Legend />}
-            {numericFields.map((field, i) => (
+            {series.map((s, i) => (
               <Line
-                key={field}
+                key={s.field}
                 type="monotone"
-                dataKey={field}
+                dataKey={s.field}
                 stroke={CHART_COLORS[i % CHART_COLORS.length]}
                 strokeWidth={2}
                 dot={{ r: 3 }}
@@ -402,44 +448,7 @@ const ResultChart = React.memo(function ResultChart({
               />
             ))}
           </LineChart>
-        );
-
-      case 'pie':
-        return (
-          <PieChart>
-            <Pie
-              data={chartData}
-              dataKey={visualization.valueField}
-              nameKey={visualization.categoryField}
-              cx="50%"
-              cy="50%"
-              outerRadius={120}
-              label={({ name, percent }) =>
-                `${name} ${(percent * 100).toFixed(0)}%`
-              }
-              labelLine
-            >
-              {chartData.map((_, i) => (
-                <Cell
-                  key={`cell-${i}`}
-                  fill={CHART_COLORS[i % CHART_COLORS.length]}
-                />
-              ))}
-            </Pie>
-            <Tooltip />
-            <Legend />
-          </PieChart>
-        );
-    }
-  };
-
-  return (
-    <div className="w-full">
-      <p className="text-xs font-medium text-muted-foreground mb-2">
-        {visualization.title}
-      </p>
-      <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-        {renderChart()}
+        )}
       </ResponsiveContainer>
     </div>
   );

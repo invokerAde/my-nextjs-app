@@ -1,189 +1,277 @@
 /**
- * Visualization Inference — rule-based engine that decides whether a SQL
- * result set is suitable for chart rendering, and produces a small chart spec
- * for the frontend Recharts layer.
+ * Visualization Generation — AI SDK structured output for chart spec.
  *
- * No AI involvement — pure heuristics on columns + rows + question text.
+ * Replaces rule-based heuristics with LLM-driven chart type selection.
+ * The AI output is validated/normalized before returning to the frontend.
  */
 
-export interface VisualizationSpec {
-  schemaVersion: 1;
-  type: 'bar' | 'line' | 'pie';
+import { generateText } from 'ai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { z } from 'zod';
+
+// ── v2 Spec ──
+
+export type VisualizationSpec =
+  | BarLineSpec
+  | PieSpec;
+
+export interface BarLineSpec {
+  schemaVersion: 2;
+  type: 'bar' | 'line';
   title: string;
-  xField?: string;
-  yFields?: string[];
-  categoryField?: string;
-  valueField?: string;
+  xAxis: { field: string; label?: string };
+  series: { field: string; label?: string }[];
 }
 
-const MAX_CATEGORIES = 20;
-const MAX_PIE_CATEGORIES = 10;
-const MAX_TEXT_LENGTH = 80;
+export interface PieSpec {
+  schemaVersion: 2;
+  type: 'pie';
+  title: string;
+  categoryField: string;
+  valueField: string;
+}
+
+// ── Config ──
+
+const MODEL = process.env.TEXT2SQL_VIS_MODEL
+  || process.env.TEXT2SQL_MODEL
+  || process.env.OPENAI_CHAT_MODEL
+  || 'gpt-4o-mini';
+
+const TIMEOUT_MS = Number(process.env.TEXT2SQL_VIS_TIMEOUT_MS) || 15000;
 const MAX_TITLE_LENGTH = 80;
-const MAX_YFIELDS = 3;
+const MAX_SERIES = 4;
+const MAX_PREVIEW_ROWS = 20;
+
+// ── AI Provider ──
+
+let _provider: ReturnType<typeof createOpenAICompatible> | null = null;
+
+function getProvider() {
+  if (!_provider) {
+    _provider = createOpenAICompatible({
+      name: 'text2sql-vis',
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: process.env.OPENAI_BASE_URL!,
+      supportsStructuredOutputs: false,
+    });
+  }
+  return _provider;
+}
+
+// ── Zod schema for AI output ──
+
+const chartTypeEnum = z.enum(['bar', 'line', 'pie', 'none']);
+
+const aiOutputSchema = z.object({
+  chartType: chartTypeEnum.describe(
+    'bar, line, pie, or none if the data is not suitable for charting'
+  ),
+  title: z.string().describe('Short chart title in the same language as the user question'),
+  xField: z.string().nullish().describe(
+    'Column name for X axis (bar/line). Null for pie or none.'
+  ),
+  yFields: z.array(z.string()).nullish().describe(
+    'Numeric column names for Y axis (bar/line). Null for pie or none.'
+  ),
+  categoryField: z.string().nullish().describe(
+    'Column name for pie categories. Null for bar/line or none.'
+  ),
+  valueField: z.string().nullish().describe(
+    'Numeric column name for pie values. Null for bar/line or none.'
+  ),
+});
+
+type AIOutput = z.infer<typeof aiOutputSchema>;
 
 // ── Helpers ──
 
-function truncateTitle(question: string): string {
-  if (question.length <= MAX_TITLE_LENGTH) return question;
-  return question.slice(0, MAX_TITLE_LENGTH - 3) + '...';
+function buildPrompt(question: string, columns: string[], rows: Record<string, unknown>[]): string {
+  const preview = rows.slice(0, MAX_PREVIEW_ROWS);
+  const header = columns.join(' | ');
+  const sampleRows = preview
+    .map(r => columns.map(c => formatCell(r[c])).join(' | '))
+    .join('\n');
+
+  return `The user asked: "${question}"
+
+SQL result columns: [${columns.join(', ')}]
+Row count: ${rows.length}
+
+Preview (up to ${MAX_PREVIEW_ROWS} rows):
+${header}
+${sampleRows}
+
+Choose the best chart type and respond with ONLY this exact JSON format (no markdown, no extra text):
+
+For bar/line charts:
+{"chartType":"bar","title":"<title>","xField":"<column>","yFields":["<col1>","<col2>"]}
+
+For pie charts:
+{"chartType":"pie","title":"<title>","categoryField":"<column>","valueField":"<column>"}
+
+For no chart:
+{"chartType":"none","title":"","xField":null,"yFields":null,"categoryField":null,"valueField":null}
+
+Rules:
+- chartType must be "bar", "line", "pie", or "none".
+- Use line for time series or ordered sequences.
+- Use bar for comparing categories.
+- Use pie for distribution/proportion (few categories, non-negative values).
+- Use none if data is a plain list or has no numeric dimension.
+- Field names must EXACTLY match the column names above.`;
 }
 
-// ── Column classification ──
-
-interface ColumnInfo {
-  numerical: string[];
-  dateTime: string[];
-  categorical: string[];
-  idLike: string[];
-  textLike: string[];
+function formatCell(value: unknown): string {
+  if (value === null || value === undefined) return '-';
+  if (typeof value === 'object') return JSON.stringify(value);
+  const s = String(value);
+  return s.length > 50 ? s.slice(0, 47) + '...' : s;
 }
 
-function isTemporalName(col: string): boolean {
-  return /^(date|time|month|year|day|quarter|created|updated|timestamp|period|week)$/i.test(col)
-    || /[_.]?(date|time|month|year|day|quarter|timestamp)$/i.test(col);
+function truncateTitle(title: string): string {
+  if (title.length <= MAX_TITLE_LENGTH) return title;
+  return title.slice(0, MAX_TITLE_LENGTH - 3) + '...';
 }
 
-function classifyColumns(columns: string[], rows: Record<string, unknown>[]): ColumnInfo {
-  const numerical: string[] = [];
-  const dateTime: string[] = [];
-  const categorical: string[] = [];
-  const idLike: string[] = [];
-  const textLike: string[] = [];
+// ── Normalization ──
 
-  for (const col of columns) {
-    const values = rows.map(r => r[col]).filter(v => v !== null && v !== undefined);
-    if (values.length === 0) { textLike.push(col); continue; }
-
-    const colLower = col.toLowerCase();
-
-    // ID detection by name pattern — all values unique → likely a key
-    if (/[_.]?id$|[_.]?uuid$|[_.]?pk$|^id$/i.test(colLower)) {
-      const distinctCount = new Set(values.map(String)).size;
-      if (distinctCount === values.length) { idLike.push(col); continue; }
-    }
-
-    // Temporal column names checked before numeric so year/month/day
-    // columns containing numbers go to dateTime, not numerical.
-    if (isTemporalName(col)) { dateTime.push(col); continue; }
-
-    // Numeric detection
-    if (values.every(v => {
-      if (typeof v === 'number' || typeof v === 'bigint') return true;
-      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim())) return true;
-      return false;
-    })) { numerical.push(col); continue; }
-
-    // Date/time by value pattern (ISO dates, timestamps)
-    const dateRx = /^\d{4}-\d{2}-\d{2}|^\d{2}\/\d{2}\/\d{4}|T\d{2}:\d{2}/;
-    const dateLikeCount = values.filter(v => {
-      const s = String(v);
-      return dateRx.test(s) && !isNaN(Date.parse(s));
-    }).length;
-    if (dateLikeCount >= values.length * 0.8) { dateTime.push(col); continue; }
-
-    // Text-like: long strings or too many distinct values
-    const strings = values.filter(v => typeof v === 'string');
-    if (strings.length > 0) {
-      const maxLen = Math.max(...strings.map(s => s.length));
-      if (maxLen > MAX_TEXT_LENGTH) { textLike.push(col); continue; }
-
-      const distinctCount = new Set(strings.map(s => s.toLowerCase())).size;
-      if (distinctCount > MAX_CATEGORIES && distinctCount / values.length > 0.8) {
-        textLike.push(col); continue;
-      }
-    }
-
-    categorical.push(col);
-  }
-
-  return { numerical, dateTime, categorical, idLike, textLike };
-}
-
-// ── Pie keyword detection ──
-
-function isPieQuestion(question: string, columns: string[]): boolean {
-  const lower = question.toLowerCase();
-  const keywords = ['distribution', 'ratio', 'proportion', 'percentage', 'breakdown',
-    'share', 'split', 'composition', 'classified', 'category stat', 'categories'];
-  const colKeywords = ['status', 'rating', 'type', 'level', 'tier', 'group', 'segment',
-    'region', 'country', 'gender', 'role', 'channel', 'source'];
-
-  return keywords.some(k => lower.includes(k))
-    || columns.some(c => colKeywords.some(ck => c.toLowerCase().includes(ck)));
-}
-
-// ── Chart type dispatch ──
-
-type ChartSpec = Extract<VisualizationSpec, { type: 'bar' | 'line' | 'pie' }>;
-
-function makeSpec(type: ChartSpec['type'], question: string, fields: Partial<ChartSpec>): ChartSpec {
-  return { schemaVersion: 1, type, title: truncateTitle(question), ...fields } as ChartSpec;
-}
-
-// ── Main inference ──
-
-export function inferVisualization(
+function normalizeVisualizationIntent(
+  ai: AIOutput,
   columns: string[],
   rows: Record<string, unknown>[],
-  question: string,
 ): VisualizationSpec | null {
   if (!columns.length || !rows.length) return null;
+  if (ai.chartType === 'none') return null;
 
-  const info = classifyColumns(columns, rows);
-  if (info.numerical.length === 0) return null;
+  const colSet = new Set(columns);
 
-  const meaningfulX = [...info.dateTime, ...info.categorical, ...info.numerical];
-  const hasXAxis = meaningfulX.length > info.numerical.length;
+  if (ai.chartType === 'pie') {
+    const catField = ai.categoryField;
+    const valField = ai.valueField;
+    if (!catField || !valField) return null;
+    if (!colSet.has(catField) || !colSet.has(valField)) return null;
 
-  if (!hasXAxis) {
-    // All columns are numeric: first as X axis, remaining as Y
-    if (info.numerical.length >= 2 && rows.length > 1) {
-      return makeSpec('bar', question, {
-        xField: info.numerical[0],
-        yFields: info.numerical.slice(1, MAX_YFIELDS + 1),
-      });
+    // Validate value field is numeric and non-negative
+    if (!rows.every(r => {
+      const v = Number(r[valField]);
+      return !isNaN(v) && v >= 0;
+    })) return null;
+
+    return {
+      schemaVersion: 2,
+      type: 'pie',
+      title: truncateTitle(ai.title),
+      categoryField: catField,
+      valueField: valField,
+    };
+  }
+
+  if (ai.chartType === 'bar' || ai.chartType === 'line') {
+    const xField = ai.xField;
+    const yFields = (ai.yFields || []).filter(Boolean).slice(0, MAX_SERIES);
+    if (!xField || yFields.length === 0) return null;
+    if (!colSet.has(xField)) return null;
+    if (!yFields.every(f => colSet.has(f))) return null;
+
+    // Validate yFields contain finite numbers
+    for (const f of yFields) {
+      if (!rows.some(r => {
+        const v = Number(r[f]);
+        return !isNaN(v) && isFinite(v);
+      })) return null;
     }
 
-    // Single numeric + possible text category → only if pie-question
-    if (info.numerical.length === 1 && rows.length <= MAX_PIE_CATEGORIES && isPieQuestion(question, columns)) {
-      const nonNumCol = columns.find(c => !info.numerical.includes(c));
-      if (nonNumCol && !info.textLike.includes(nonNumCol)) {
-        return makeSpec('pie', question, {
-          categoryField: nonNumCol,
-          valueField: info.numerical[0],
-        });
-      }
+    return {
+      schemaVersion: 2,
+      type: ai.chartType,
+      title: truncateTitle(ai.title),
+      xAxis: { field: xField },
+      series: yFields.map(f => ({ field: f })),
+    };
+  }
+
+  return null;
+}
+
+// ── Main entry point ──
+
+export interface VisualizationResult {
+  visualization: VisualizationSpec | null;
+  warning?: string;
+}
+
+function parseAIResponse(text: string): AIOutput | null {
+  // Try to extract JSON from markdown fences or raw text
+  const trimmed = text.trim();
+  let jsonStr = trimmed;
+
+  const fenceMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/i);
+  if (fenceMatch) jsonStr = fenceMatch[1].trim();
+
+  try {
+    const parsed = JSON.parse(jsonStr);
+    return aiOutputSchema.parse(parsed);
+  } catch {
+    // Try to find a JSON object anywhere in the text
+    const objMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (objMatch) {
+      try {
+        const parsed = JSON.parse(objMatch[0]);
+        return aiOutputSchema.parse(parsed);
+      } catch { /* fall through */ }
     }
     return null;
   }
+}
 
-  // Pick the best X field: prefer dateTime, then categorical
-  const xField = info.dateTime.length > 0 ? info.dateTime[0]
-    : info.categorical.length > 0 ? info.categorical[0]
-    : null;
-  if (!xField || info.textLike.includes(xField)) return null;
+export async function generateVisualizationSpec(params: {
+  question: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+}): Promise<VisualizationResult> {
+  const { question, columns, rows } = params;
 
-  // Line chart: date/time X axis
-  if (info.dateTime.includes(xField)) {
-    return makeSpec('line', question, {
-      xField,
-      yFields: info.numerical.slice(0, MAX_YFIELDS),
+  if (!columns.length || !rows.length) {
+    return { visualization: null };
+  }
+
+  const model = getProvider()(MODEL);
+
+  try {
+    const prompt = buildPrompt(question, columns, rows);
+
+    const { text } = await generateText({
+      model,
+      prompt,
+      maxOutputTokens: 300,
+      temperature: 0,
     });
-  }
 
-  // Pie chart: single numeric, few categories, distribution question
-  const distinctX = new Set(rows.map(r => String(r[xField]))).size;
-  if (info.numerical.length === 1 && distinctX <= MAX_PIE_CATEGORIES && isPieQuestion(question, columns)) {
-    const numVal = info.numerical[0];
-    if (rows.every(r => { const v = Number(r[numVal]); return !isNaN(v) && v >= 0; })) {
-      return makeSpec('pie', question, { categoryField: xField, valueField: numVal });
+    const output = parseAIResponse(text);
+
+    if (!output) {
+      return {
+        visualization: null,
+        warning: `Visualization parse error: AI response was not valid JSON`,
+      };
     }
-  }
 
-  // Default: bar chart
-  return makeSpec('bar', question, {
-    xField,
-    yFields: info.numerical.slice(0, MAX_YFIELDS),
-  });
+    const normalized = normalizeVisualizationIntent(output, columns, rows);
+
+    if (!normalized && output.chartType !== 'none') {
+      return {
+        visualization: null,
+        warning: `AI suggested chartType="${output.chartType}" but normalization rejected it`,
+      };
+    }
+
+    return { visualization: normalized };
+  } catch (err: any) {
+    const msg = err.message || String(err);
+    if (msg.includes('timeout') || msg.includes('abort') || msg.includes('ETIMEDOUT')) {
+      return { visualization: null, warning: 'Visualization AI timeout' };
+    }
+    return { visualization: null, warning: `Visualization AI error: ${msg.slice(0, 100)}` };
+  }
 }

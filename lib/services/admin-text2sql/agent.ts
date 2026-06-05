@@ -9,7 +9,7 @@ import { retrieveKnowledge } from './retriever';
 import { generateSQL } from './generator';
 import { executeSQL } from './executor';
 import { validateAdminSQL, validateQuestion } from './validator';
-import { inferVisualization, type VisualizationSpec } from './visualization';
+import { generateVisualizationSpec, type VisualizationSpec } from './visualization';
 
 const MAX_ROWS = Number(process.env.TEXT2SQL_MAX_ROWS) || 100;
 const MAX_RETRIES = Number(process.env.TEXT2SQL_MAX_RETRIES) || 2;
@@ -92,9 +92,11 @@ export async function runText2SQL(req: Text2SQLRequest): Promise<Text2SQLRespons
   for (let execAttempt = 0; execAttempt <= MAX_RETRIES; execAttempt++) {
     try {
       const { columns, rows, ms } = await executeSQL(sql, effectiveMaxRows);
-      const visualization = inferVisualization(columns, rows, req.question);
+      const { visualization, warning: visWarning } =
+        await generateVisualizationSpec({ question: req.question, columns, rows });
+      const allWarnings = visWarning ? [...warnings, visWarning] : warnings;
       return { sql, columns, rows, rowCount: rows.length, attempts: attempt,
-        executionMs: ms, warnings, knowledgeSources, visualization };
+        executionMs: ms, warnings: allWarnings, knowledgeSources, visualization };
     } catch (err: any) {
       const msg = err.message || String(err);
       warnings.push(`Exec attempt ${execAttempt + 1} failed: ${msg}`);
