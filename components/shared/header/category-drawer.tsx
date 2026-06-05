@@ -1,4 +1,3 @@
-import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
 import {
   Drawer,
@@ -18,10 +17,10 @@ const CategoryDrawer = async () => {
 
   return (
     <Drawer direction="left">
-      <DrawerTrigger asChild>
-        <Button variant="outline">
-          <MenuIcon />
-        </Button>
+      <DrawerTrigger
+        className={cn(buttonVariants({ variant: "outline" }))}
+      >
+        <MenuIcon />
       </DrawerTrigger>
       <DrawerContent className="h-full max-w-sm">
         <DrawerHeader>
@@ -31,7 +30,6 @@ const CategoryDrawer = async () => {
               <DrawerClose asChild key={x.category}>
                 <Link
                   href={`/search?category=${x.category}`}
-                  // 使用 buttonVariants 来手动应用 "ghost" 样式
                   className={cn(
                     buttonVariants({ variant: "ghost" }),
                     "w-full justify-start",

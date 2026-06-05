@@ -15,7 +15,6 @@ import Link from 'next/link';
 
 import Charts from './charts';
 import { requireAdmin } from '@/lib/auth-guard';
-import { RagAdminPanel } from '@/components/admin/rag-admin-panel';
 
 export const metadata: Metadata = {
   title: 'Admin Dashboard',
@@ -29,7 +28,6 @@ const AdminOverviewPage = async () => {
   return (
     <div className='space-y-2'>
       <h1 className='h2-bold'>Dashboard</h1>
-      <RagAdminPanel />
       <div className='grid gap-4 md:grid-cols-2 lg:grid-cols-4'>
         <Card>
           <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
