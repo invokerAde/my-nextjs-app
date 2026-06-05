@@ -25,6 +25,15 @@ describe('Admin Text2SQL API response shape', () => {
       executionMs: number;
       warnings: string[];
       knowledgeSources: string[];
+      visualization?: {
+        schemaVersion: number;
+        type: 'bar' | 'line' | 'pie';
+        title: string;
+        xField?: string;
+        yFields?: string[];
+        categoryField?: string;
+        valueField?: string;
+      } | null;
     } = {
       sql: 'SELECT 1',
       columns: ['?column?'],
@@ -39,6 +48,44 @@ describe('Admin Text2SQL API response shape', () => {
     expect(response.columns).toEqual(['?column?']);
     expect(response.rowCount).toBe(1);
     expect(response.executionMs).toBe(42);
+    expect(response.visualization).toBeUndefined();
+  });
+
+  it('Text2SQLResponse accepts visualization field', () => {
+    const withVis: {
+      sql: string;
+      columns: string[];
+      rows: Record<string, unknown>[];
+      rowCount: number;
+      attempts: number;
+      executionMs: number;
+      warnings: string[];
+      knowledgeSources: string[];
+      visualization?: { schemaVersion: number; type: 'bar'; title: string; xField: string; yFields: string[] } | null;
+    } = {
+      sql: 'SELECT category, SUM(amount) AS total FROM sales GROUP BY category',
+      columns: ['category', 'total'],
+      rows: [
+        { category: 'Electronics', total: 15000 },
+        { category: 'Clothing', total: 8000 },
+      ],
+      rowCount: 2,
+      attempts: 1,
+      executionMs: 55,
+      warnings: [],
+      knowledgeSources: [],
+      visualization: {
+        schemaVersion: 1,
+        type: 'bar',
+        title: 'Sales by category',
+        xField: 'category',
+        yFields: ['total'],
+      },
+    };
+    expect(withVis.visualization).not.toBeNull();
+    expect(withVis.visualization!.type).toBe('bar');
+    expect(withVis.visualization!.xField).toBe('category');
+    expect(withVis.visualization!.yFields).toEqual(['total']);
   });
 
   it('Text2SQLRequest type accepts question, dryRun, maxRows', () => {

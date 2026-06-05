@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +14,22 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import {
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
+import type { VisualizationSpec } from '@/lib/services/admin-text2sql/visualization';
 
 // ── Types ──
 
@@ -26,6 +42,7 @@ interface Text2SQLResponse {
   executionMs: number;
   warnings: string[];
   knowledgeSources: string[];
+  visualization?: VisualizationSpec | null;
 }
 
 interface ChatMessage {
@@ -291,9 +308,151 @@ function AssistantError({ message }: { message: ChatMessage }) {
   );
 }
 
+// ── Chart colors ──
+
+const CHART_COLORS = [
+  '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
+  '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#6366f1',
+];
+
+const CHART_HEIGHT = 320;
+const X_LABEL_ROTATE_THRESHOLD = 8;
+
+// ── ResultChart ──
+
+const ResultChart = React.memo(function ResultChart({
+  visualization,
+  rows,
+}: {
+  visualization: VisualizationSpec;
+  rows: Record<string, unknown>[];
+}) {
+  // Convert only the fields the chart actually uses
+  const numericFields = visualization.type === 'pie'
+    ? [visualization.valueField!]
+    : (visualization.yFields || []);
+  const allUsedFields = new Set([
+    visualization.xField,
+    visualization.categoryField,
+    ...numericFields,
+  ].filter(Boolean) as string[]);
+
+  const chartData = rows.map(row => {
+    const mapped: Record<string, unknown> = {};
+    for (const field of allUsedFields) {
+      if (field in row) {
+        const v = row[field];
+        mapped[field] = numericFields.includes(field) ? Number(v) : v;
+      }
+    }
+    return mapped;
+  });
+
+  const manyBars = chartData.length > X_LABEL_ROTATE_THRESHOLD;
+
+  const renderChart = () => {
+    switch (visualization.type) {
+      case 'bar':
+        return (
+          <BarChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" className="stroke-muted/50" />
+            <XAxis
+              dataKey={visualization.xField}
+              tick={{ fontSize: 11 }}
+              interval={0}
+              angle={manyBars ? -30 : 0}
+              textAnchor={manyBars ? 'end' : 'middle'}
+              height={manyBars ? 60 : 30}
+            />
+            <YAxis tick={{ fontSize: 11 }} />
+            <Tooltip />
+            {chartData.length <= 12 && <Legend />}
+            {numericFields.map((field, i) => (
+              <Bar
+                key={field}
+                dataKey={field}
+                fill={CHART_COLORS[i % CHART_COLORS.length]}
+                radius={[4, 4, 0, 0]}
+              />
+            ))}
+          </BarChart>
+        );
+
+      case 'line':
+        return (
+          <LineChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" className="stroke-muted/50" />
+            <XAxis
+              dataKey={visualization.xField}
+              tick={{ fontSize: 11 }}
+              interval="preserveStartEnd"
+            />
+            <YAxis tick={{ fontSize: 11 }} />
+            <Tooltip />
+            {chartData.length <= 12 && <Legend />}
+            {numericFields.map((field, i) => (
+              <Line
+                key={field}
+                type="monotone"
+                dataKey={field}
+                stroke={CHART_COLORS[i % CHART_COLORS.length]}
+                strokeWidth={2}
+                dot={{ r: 3 }}
+                activeDot={{ r: 5 }}
+              />
+            ))}
+          </LineChart>
+        );
+
+      case 'pie':
+        return (
+          <PieChart>
+            <Pie
+              data={chartData}
+              dataKey={visualization.valueField}
+              nameKey={visualization.categoryField}
+              cx="50%"
+              cy="50%"
+              outerRadius={120}
+              label={({ name, percent }) =>
+                `${name} ${(percent * 100).toFixed(0)}%`
+              }
+              labelLine
+            >
+              {chartData.map((_, i) => (
+                <Cell
+                  key={`cell-${i}`}
+                  fill={CHART_COLORS[i % CHART_COLORS.length]}
+                />
+              ))}
+            </Pie>
+            <Tooltip />
+            <Legend />
+          </PieChart>
+        );
+    }
+  };
+
+  return (
+    <div className="w-full">
+      <p className="text-xs font-medium text-muted-foreground mb-2">
+        {visualization.title}
+      </p>
+      <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+        {renderChart()}
+      </ResponsiveContainer>
+    </div>
+  );
+});
+
 function AssistantResult({ result }: { result: Text2SQLResponse }) {
   return (
     <div className="text-sm space-y-3">
+      {/* Chart */}
+      {result.visualization && result.rows.length > 0 && (
+        <ResultChart visualization={result.visualization} rows={result.rows} />
+      )}
+
       {/* Data table */}
       {result.columns.length > 0 && result.rows.length > 0 && (
         <DataTable columns={result.columns} rows={result.rows} />

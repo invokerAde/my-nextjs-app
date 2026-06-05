@@ -47,6 +47,7 @@ function mockSuccess(overrides: Record<string, unknown> = {}) {
       executionMs: 42,
       warnings: [],
       knowledgeSources: ['retrieved:sql_ddl', 'retrieved:sql_description'],
+      visualization: null,
       ...overrides,
     }),
   } as unknown as Response);
@@ -272,6 +273,66 @@ describe('AiAnalyticsChat', () => {
     // fetch should not have been called, input retains value
     expect(mockFetch).not.toHaveBeenCalled();
     expect(input).toHaveValue('No submit');
+  });
+
+  it('renders chart when visualization is present', async () => {
+    mockSuccess({
+      columns: ['category', 'total_sales'],
+      rows: [
+        { category: 'Electronics', total_sales: 15000 },
+        { category: 'Clothing', total_sales: 8000 },
+      ],
+      rowCount: 2,
+      visualization: {
+        schemaVersion: 1,
+        type: 'bar',
+        title: 'Sales by category',
+        xField: 'category',
+        yFields: ['total_sales'],
+      },
+    });
+    render(<AiAnalyticsChat />);
+
+    fireEvent.change(screen.getByPlaceholderText('Ask a question about your store data...'), {
+      target: { value: 'Sales by category' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+
+    // Chart title should be visible
+    await waitFor(() => {
+      expect(screen.getByText('Sales by category')).toBeInTheDocument();
+    });
+
+    // Table is still rendered below the chart
+    expect(screen.getByText('category')).toBeInTheDocument();
+    expect(screen.getByText('total_sales')).toBeInTheDocument();
+    expect(screen.getByText('Electronics')).toBeInTheDocument();
+
+    // ResponsiveContainer renders
+    expect(document.querySelector('.recharts-responsive-container')).toBeInTheDocument();
+  });
+
+  it('does not render chart when visualization is null', async () => {
+    mockSuccess({
+      columns: ['product_name', 'price'],
+      rows: [{ product_name: 'Widget', price: 9.99 }],
+      rowCount: 1,
+      visualization: null,
+    });
+    render(<AiAnalyticsChat />);
+
+    fireEvent.change(screen.getByPlaceholderText('Ask a question about your store data...'), {
+      target: { value: 'Simple query' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('product_name')).toBeInTheDocument();
+      expect(screen.getByText('Widget')).toBeInTheDocument();
+    });
+
+    // No recharts container
+    expect(document.querySelector('.recharts-responsive-container')).not.toBeInTheDocument();
   });
 
   it('disables input and button while loading', async () => {
