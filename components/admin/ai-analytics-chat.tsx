@@ -143,7 +143,7 @@ export function AiAnalyticsChat() {
   }
 
   return (
-    <div className="flex flex-col gap-6 max-w-4xl">
+    <div className="flex flex-col gap-6 max-w-4xl mx-auto">
       {/* Messages area */}
       <div className="flex flex-col gap-4 min-h-[300px]">
         {messages.length === 0 && !loading && (
