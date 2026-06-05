@@ -78,11 +78,13 @@ SELECT
   COUNT(DISTINCT o.id)::int AS order_count,
   COALESCE(SUM(oi.qty * oi.price)::numeric, 0) AS total_spent,
   COALESCE(SUM(CASE WHEN o."isPaid" THEN oi.qty * oi.price ELSE 0 END)::numeric, 0) AS paid_spent,
-  COALESCE(SUM(CASE WHEN o."isDelivered" THEN oi.qty * oi.price ELSE 0 END)::numeric, 0) AS delivered_spent
+  COALESCE(SUM(CASE WHEN o."isDelivered" THEN oi.qty * oi.price ELSE 0 END)::numeric, 0) AS delivered_spent,
+  u.name,
+  u.email
 FROM "User" u
 LEFT JOIN "Order" o ON o."userId" = u.id
 LEFT JOIN "OrderItem" oi ON oi."orderId" = o.id
-GROUP BY u.id, u.role, u."createdAt"`,
+GROUP BY u.id, u.role, u."createdAt", u.name, u.email`,
 };
 
 // ── Field descriptions ──
@@ -137,6 +139,8 @@ export const FIELD_DESCRIPTIONS: FieldDescription[] = [
   { view: 'admin_review_analytics_view', field: 'product_brand', description: '被评论商品品牌' },
   // customer
   { view: 'admin_customer_summary_view', field: 'user_id', description: '用户 ID' },
+  { view: 'admin_customer_summary_view', field: 'name', description: '用户名称' },
+  { view: 'admin_customer_summary_view', field: 'email', description: '用户邮箱' },
   { view: 'admin_customer_summary_view', field: 'role', description: '用户角色（user/admin）' },
   { view: 'admin_customer_summary_view', field: 'registered_at', description: '注册时间' },
   { view: 'admin_customer_summary_view', field: 'order_count', description: '累计订单数' },
@@ -291,8 +295,16 @@ ORDER BY rating`,
   },
   // ── Customer ──
   {
+    question: '下单数超过5单的客户有哪些？',
+    sql: `SELECT name, email, registered_at, order_count, total_spent
+FROM admin_customer_summary_view
+WHERE order_count > 5
+ORDER BY order_count DESC
+LIMIT 20`,
+  },
+  {
     question: '消费最高的10个用户的消费总额？',
-    sql: `SELECT user_id, order_count, total_spent, paid_spent
+    sql: `SELECT name, email, order_count, total_spent, paid_spent
 FROM admin_customer_summary_view
 ORDER BY total_spent DESC
 LIMIT 10`,

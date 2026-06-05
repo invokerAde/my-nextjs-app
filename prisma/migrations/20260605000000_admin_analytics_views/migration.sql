@@ -3,7 +3,7 @@
 -- Raw sensitive tables (User password/address, Payment details) are excluded.
 
 -- 1. Product analytics (price, rating, stock, category, brand)
-CREATE VIEW admin_product_analytics_view AS
+CREATE OR REPLACE VIEW admin_product_analytics_view AS
 SELECT
   p.id AS product_id,
   p.name AS product_name,
@@ -19,7 +19,7 @@ SELECT
 FROM "Product" p;
 
 -- 2. Order analytics (order items + product context, payment/delivery status, time)
-CREATE VIEW admin_order_analytics_view AS
+CREATE OR REPLACE VIEW admin_order_analytics_view AS
 SELECT
   o.id AS order_id,
   o."userId" AS user_id,
@@ -41,7 +41,7 @@ JOIN "OrderItem" oi ON oi."orderId" = o.id
 LEFT JOIN "Product" p ON p.id = oi."productId";
 
 -- 3. Review analytics (rating, verified purchase, product context, time)
-CREATE VIEW admin_review_analytics_view AS
+CREATE OR REPLACE VIEW admin_review_analytics_view AS
 SELECT
   r.id AS review_id,
   r."productId" AS product_id,
@@ -58,8 +58,8 @@ SELECT
 FROM "Review" r
 JOIN "Product" p ON p.id = r."productId";
 
--- 4. Customer summary (aggregated, no PII)
-CREATE VIEW admin_customer_summary_view AS
+-- 4. Customer summary (aggregated, no PII beyond name/email)
+CREATE OR REPLACE VIEW admin_customer_summary_view AS
 SELECT
   u.id AS user_id,
   u.role,
@@ -67,8 +67,10 @@ SELECT
   COUNT(DISTINCT o.id)::int AS order_count,
   COALESCE(SUM(oi.qty * oi.price)::numeric, 0) AS total_spent,
   COALESCE(SUM(CASE WHEN o."isPaid" THEN oi.qty * oi.price ELSE 0 END)::numeric, 0) AS paid_spent,
-  COALESCE(SUM(CASE WHEN o."isDelivered" THEN oi.qty * oi.price ELSE 0 END)::numeric, 0) AS delivered_spent
+  COALESCE(SUM(CASE WHEN o."isDelivered" THEN oi.qty * oi.price ELSE 0 END)::numeric, 0) AS delivered_spent,
+  u.name,
+  u.email
 FROM "User" u
 LEFT JOIN "Order" o ON o."userId" = u.id
 LEFT JOIN "OrderItem" oi ON oi."orderId" = o.id
-GROUP BY u.id, u.role, u."createdAt";
+GROUP BY u.id, u.role, u."createdAt", u.name, u.email;

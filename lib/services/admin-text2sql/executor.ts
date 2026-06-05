@@ -32,14 +32,15 @@ export async function executeSQL(
   const start = Date.now();
   const client = await getReadonlyPrisma();
 
-  // Database-level statement_timeout (milliseconds)
   const timeoutMs = Math.max(EXEC_TIMEOUT_MS, 1000);
-  await client.$executeRawUnsafe(`SET statement_timeout = ${timeoutMs}`);
 
-  // Set session to read-only — failure is fatal here
-  await client.$executeRawUnsafe('SET default_transaction_read_only = on');
-
-  const result = await client.$queryRawUnsafe(sql) as Record<string, unknown>[];
+  // Wrap in a transaction so SET LOCAL does not leak to pooled connections.
+  const result = await client.$transaction(async (tx: any) => {
+    await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${timeoutMs}`);
+    await tx.$executeRawUnsafe('SET LOCAL default_transaction_read_only = on');
+    const rows = await tx.$queryRawUnsafe(sql) as Record<string, unknown>[];
+    return rows;
+  });
 
   return {
     columns: result.length > 0 ? Object.keys(result[0]) : [],
