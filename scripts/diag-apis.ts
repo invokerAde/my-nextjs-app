@@ -16,13 +16,14 @@ async function main() {
     maxRetries: 0,
   });
 
+  let embMs = 0;
   const t0 = Date.now();
   try {
     const embRes = await embClient.embeddings.create({
       model: process.env.EMBEDDING_MODEL || 'text-embedding-v4',
       input: 'How many orders in the last 3 months?',
     });
-    const embMs = Date.now() - t0;
+    embMs = Date.now() - t0;
     console.log(`   ✅ ${embMs}ms, dimensions=${embRes.data[0].embedding.length}`);
   } catch (e: any) {
     console.log(`   ❌ FAILED after ${Date.now() - t0}ms: ${e.message}`);
@@ -37,6 +38,7 @@ async function main() {
     maxRetries: 0,
   });
 
+  let llmMs = 0;
   const t1 = Date.now();
   try {
     const llmRes = await llmClient.chat.completions.create({
@@ -48,7 +50,7 @@ async function main() {
       temperature: 0,
       max_tokens: 300,
     });
-    const llmMs = Date.now() - t1;
+    llmMs = Date.now() - t1;
     const sql = llmRes.choices[0]?.message?.content?.trim() || '(empty)';
     console.log(`   ✅ ${llmMs}ms`);
     console.log(`   SQL: ${sql.substring(0, 200)}`);

@@ -17,6 +17,7 @@
     "@ai-sdk/openai-compatible": "^2.0.48",
     "@ai-sdk/react": "^3.0.197",
     "@auth/prisma-adapter": "^2.11.1",
+    "@fontsource/inter": "^5.2.8",
     "@hookform/resolvers": "^5.2.2",
     "@neondatabase/serverless": "^0.10.4",
     "@paypal/react-paypal-js": "^9.1.0",
